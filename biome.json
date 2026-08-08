@@ -1,0 +1,32 @@
+{
+    "$schema": "https://biomejs.dev/schemas/2.5.7/schema.json",
+    "files": {
+        "ignoreUnknown": false,
+        "includes": ["src/**", "test/**", "biome.json", "package.json"]
+    },
+    "formatter": {
+        "enabled": true,
+        "indentStyle": "space",
+        "indentWidth": 4,
+        "lineWidth": 120
+    },
+    "linter": {
+        "enabled": true,
+        "rules": {
+            "preset": "recommended"
+        }
+    },
+    "javascript": {
+        "formatter": {
+            "quoteStyle": "double"
+        }
+    },
+    "assist": {
+        "enabled": true,
+        "actions": {
+            "source": {
+                "organizeImports": "on"
+            }
+        }
+    }
+}

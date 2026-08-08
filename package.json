@@ -1,0 +1,20 @@
+{
+    "name": "deepseek-user-message-renderer",
+    "version": "1.0.0",
+    "description": "Userscript that renders DeepSeek user messages with native-style Markdown, math, and code highlighting, plus its test environment",
+    "private": true,
+    "type": "module",
+    "scripts": {
+        "test": "bun test --parallel",
+        "lint": "biome check .",
+        "lint:fix": "biome check --write .",
+        "format": "biome format --write ."
+    },
+    "devDependencies": {
+        "@biomejs/biome": "^2.5.7",
+        "@types/bun": "latest",
+        "happy-dom": "^20.11.2",
+        "marked": "12.0.0",
+        "typescript": "^5"
+    }
+}
