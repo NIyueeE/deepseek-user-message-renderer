@@ -16,6 +16,7 @@ export interface MessageFixture {
     content: HTMLElement;
     editButton: HTMLElement;
     copyButton: HTMLElement;
+    cancelButton: HTMLElement;
 }
 
 /**
@@ -32,6 +33,7 @@ export function setupTampermonkeyEnv(): UserscriptEnv {
     g.document = window.document;
     g.MutationObserver = window.MutationObserver;
     g.HTMLUnknownElement = window.HTMLUnknownElement;
+    g.HTMLElement = window.HTMLElement;
     g.getComputedStyle = window.getComputedStyle.bind(window);
 
     // Tampermonkey API stubs
@@ -55,6 +57,8 @@ export function setupTampermonkeyEnv(): UserscriptEnv {
         highlightElement: (el: HTMLElement) => {
             highlightCalls.push(el);
         },
+        // Mirrors highlight.js: languages like "text" or "mermaid" are unknown
+        getLanguage: (name: string) => (["python", "javascript", "js", "bash"].includes(name) ? {} : undefined),
     };
     const mathCalls: HTMLElement[] = [];
     g.renderMathInElement = (el: HTMLElement) => {
@@ -133,11 +137,17 @@ export function appendMessageWithActions(document: Document, text: string): Mess
     copyButton.className = "ds-button";
     copyButton.innerHTML = '<svg><path d="M0 0 copy icon"></path></svg>';
 
-    actions.append(editButton, copyButton);
+    // Cancel button shown in the edit UI
+    const cancelButton = document.createElement("div");
+    cancelButton.setAttribute("role", "button");
+    cancelButton.className = "ds-button ds-button--outlinedNeutral";
+    cancelButton.innerHTML = '<span class="ds-button__content">取消</span>';
+
+    actions.append(editButton, copyButton, cancelButton);
     group.appendChild(actions);
     document.body.appendChild(group);
 
-    return { group, message, content, editButton, copyButton };
+    return { group, message, content, editButton, copyButton, cancelButton };
 }
 
 /** Load the userscript (call setupTampermonkeyEnv and build the DOM first) */
@@ -146,8 +156,8 @@ export async function loadUserscript(): Promise<void> {
 }
 
 /** Flush microtasks and a few macrotasks so MutationObserver callbacks can run */
-export async function settle(): Promise<void> {
+export async function settle(ms = 0): Promise<void> {
     await Promise.resolve();
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, ms));
     await Promise.resolve();
 }

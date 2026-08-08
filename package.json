@@ -1,6 +1,6 @@
 {
     "name": "deepseek-user-message-renderer",
-    "version": "1.0.0",
+    "version": "1.0.3",
     "description": "Userscript that renders DeepSeek user messages with native-style Markdown, math, and code highlighting, plus its test environment",
     "private": true,
     "type": "module",
