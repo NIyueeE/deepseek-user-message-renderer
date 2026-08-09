@@ -24,6 +24,7 @@
 // ==/UserScript==
 
 (() => {
+    // Source: https://github.com/NIyueeE/deepseek-user-message-renderer
     // 1. Load stylesheets safely
     try {
         const hljsCss = GM_getResourceText("HLJS_CSS");
