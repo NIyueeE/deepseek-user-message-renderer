@@ -25,6 +25,7 @@
 
 (() => {
     // Source: https://github.com/NIyueeE/deepseek-user-message-renderer
+    // Synced to GreasyFork & OpenUserJS via GitHub webhooks.
     // 1. Load stylesheets safely
     try {
         const hljsCss = GM_getResourceText("HLJS_CSS");
