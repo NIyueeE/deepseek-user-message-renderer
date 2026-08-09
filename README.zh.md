@@ -69,8 +69,13 @@ bun run lint:fix  # 自动修复格式和 lint 问题
 - [`.github/workflows/ci.yml`](.github/workflows/ci.yml):每次 push 和 pull request
   运行 lint + 测试。
 - [`.github/workflows/release.yml`](.github/workflows/release.yml):为每个 `v*`
-  tag 构建脚本并创建 GitHub Release;配置对应密钥后还会发布到
-  GreasyFork / OpenUserJS。
+  tag 构建脚本并创建 GitHub Release;配置 `GFU` / `GFP` /
+  `GREASYFORK_TOTP_SECRET` secrets 后还会自动发布到 GreasyFork(GreasyFork
+  没有官方 API,工作流用这些凭据登录后从 raw GitHub 地址导入脚本)。
+- **OpenUserJS** 没有面向普通用户的发布 API(其 `/api` 端点仅限管理员),因此
+  只能手动发布:在 <https://openuserjs.org/user/add/scripts> 上传脚本,或使用
+  GitHub 登录后从本仓库导入。脚本元数据已包含 OpenUserJS 必需的
+  `@license MIT`。
 
 ## 许可证
 

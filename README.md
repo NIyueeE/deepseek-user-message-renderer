@@ -81,7 +81,14 @@ bun run lint:fix  # auto-fix formatting and lint issues
   every push and pull request.
 - [`.github/workflows/release.yml`](.github/workflows/release.yml) builds the
   script and creates a GitHub Release for every `v*` tag. It also publishes to
-  GreasyFork / OpenUserJS when the corresponding secrets are configured.
+  GreasyFork when the `GFU` / `GFP` / `GREASYFORK_TOTP_SECRET` secrets are
+  configured (GreasyFork has no official API, so the workflow signs in with
+  these credentials and imports the script from the raw GitHub URL).
+- **OpenUserJS** has no publishing API for regular users (its `/api` endpoints
+  are admin-only), so publishing there is manual: upload the script at
+  <https://openuserjs.org/user/add/scripts>, or log in with GitHub and import
+  it from this repository. The script metadata includes `@license MIT`, which
+  OpenUserJS requires.
 
 ## License
 

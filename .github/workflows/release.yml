@@ -42,21 +42,15 @@ jobs:
             --title "$GITHUB_REF_NAME" \
             --generate-notes
 
-      # Optional: publish to OpenUserJS with a personal access token.
-      # Create one at https://openuserjs.org/ (account settings -> API tokens)
-      # and store it as the OUJS_TOKEN secret.
-      - name: Publish to OpenUserJS
-        if: env.OUJS_TOKEN != ''
-        env:
-          OUJS_TOKEN: ${{ secrets.OUJS_TOKEN }}
-        run: |
-          curl -fsS -X PUT "https://openuserjs.org/api/script" \
-            -H "Authorization: token ${OUJS_TOKEN}" \
-            --data-binary @dist/deepseek-user-message-renderer.user.js
-
       # Optional: publish to GreasyFork by importing from the raw GitHub URL.
       # Requires secrets: GFU (account email), GFP (password), and
       # GREASYFORK_TOTP_SECRET (base32 TOTP secret, only if 2FA is enabled).
+      #
+      # Note: OpenUserJS has no publishing API for regular users (its /api
+      # endpoints are admin-only), so it cannot be automated here. Publish
+      # manually at https://openuserjs.org/user/add/scripts or import from
+      # your GitHub repo after logging in with GitHub. The script metadata
+      # includes @license MIT, which OpenUserJS requires.
       - name: Publish to GreasyFork
         if: env.GFU != ''
         env:
