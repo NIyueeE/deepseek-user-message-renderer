@@ -30,7 +30,7 @@
 1. 安装 [Tampermonkey](https://www.tampermonkey.net/)。
 2. 打开下面的脚本原始链接,Tampermonkey 会提示安装:
 
-   <https://raw.githubusercontent.com/NIyueeE/deepseek-user-message-renderer/main/src/deepseek-user-message-renderer.user.js>
+   <https://raw.githubusercontent.com/NIyueeE/deepseek-user-message-renderer/master/src/deepseek-user-message-renderer.user.js>
 
    或者手动把 [`src/deepseek-user-message-renderer.user.js`](src/deepseek-user-message-renderer.user.js)
    的内容粘贴到新的 Tampermonkey 脚本中。

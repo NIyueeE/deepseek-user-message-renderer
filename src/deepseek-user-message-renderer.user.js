@@ -2,15 +2,15 @@
 // @name         DeepSeek User Message Markdown Renderer
 // @name:zh-CN   DeepSeek 用户消息 Markdown 渲染器
 // @namespace    http://tampermonkey.net/
-// @version      1.0.4
+// @version      1.0.5
 // @description  Render your own messages on DeepSeek web with native-style Markdown, LaTeX math, and official code blocks; safe editing and history highlight included.
 // @description:zh-CN  让 DeepSeek 网页版中你自己发送的消息以原生样式渲染 Markdown、LaTeX 公式和官方风格代码块;支持安全编辑与历史消息高亮。
 // @author       NIyueeE
 // @license      MIT
 // @homepageURL  https://github.com/NIyueeE/deepseek-user-message-renderer
 // @supportURL   https://github.com/NIyueeE/deepseek-user-message-renderer/issues
-// @updateURL    https://raw.githubusercontent.com/NIyueeE/deepseek-user-message-renderer/main/src/deepseek-user-message-renderer.user.js
-// @downloadURL  https://raw.githubusercontent.com/NIyueeE/deepseek-user-message-renderer/main/src/deepseek-user-message-renderer.user.js
+// @updateURL    https://raw.githubusercontent.com/NIyueeE/deepseek-user-message-renderer/master/src/deepseek-user-message-renderer.user.js
+// @downloadURL  https://raw.githubusercontent.com/NIyueeE/deepseek-user-message-renderer/master/src/deepseek-user-message-renderer.user.js
 // @match        https://chat.deepseek.com/*
 // @require      https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.0/marked.min.js
 // @require      https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js

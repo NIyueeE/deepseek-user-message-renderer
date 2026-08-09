@@ -35,7 +35,7 @@ editing, re-rendering, or the history-item highlight.
 1. Install [Tampermonkey](https://www.tampermonkey.net/).
 2. Open the raw script below — Tampermonkey will offer to install it:
 
-   <https://raw.githubusercontent.com/NIyueeE/deepseek-user-message-renderer/main/src/deepseek-user-message-renderer.user.js>
+   <https://raw.githubusercontent.com/NIyueeE/deepseek-user-message-renderer/master/src/deepseek-user-message-renderer.user.js>
 
    Or copy the contents of
    [`src/deepseek-user-message-renderer.user.js`](src/deepseek-user-message-renderer.user.js)
