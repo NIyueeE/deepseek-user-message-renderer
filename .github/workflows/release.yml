@@ -1,0 +1,68 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Lint
+        run: bun run lint
+
+      - name: Test
+        run: bun run test
+
+      - name: Prepare release asset
+        run: |
+          mkdir -p dist
+          cp src/deepseek-user-message-renderer.user.js dist/
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/deepseek-user-message-renderer.user.js \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes
+
+      # Optional: publish to OpenUserJS with a personal access token.
+      # Create one at https://openuserjs.org/ (account settings -> API tokens)
+      # and store it as the OUJS_TOKEN secret.
+      - name: Publish to OpenUserJS
+        if: env.OUJS_TOKEN != ''
+        env:
+          OUJS_TOKEN: ${{ secrets.OUJS_TOKEN }}
+        run: |
+          curl -fsS -X PUT "https://openuserjs.org/api/script" \
+            -H "Authorization: token ${OUJS_TOKEN}" \
+            --data-binary @dist/deepseek-user-message-renderer.user.js
+
+      # Optional: publish to GreasyFork by importing from the raw GitHub URL.
+      # Requires secrets: GFU (account email), GFP (password), and
+      # GREASYFORK_TOTP_SECRET (base32 TOTP secret, only if 2FA is enabled).
+      - name: Publish to GreasyFork
+        if: env.GFU != ''
+        env:
+          GFU: ${{ secrets.GFU }}
+          GFP: ${{ secrets.GFP }}
+          GREASYFORK_TOTP_SECRET: ${{ secrets.GREASYFORK_TOTP_SECRET }}
+        run: |
+          python .github/scripts/publish_greasyfork.py \
+            "https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${GITHUB_REF_NAME}/src/deepseek-user-message-renderer.user.js"

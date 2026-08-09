@@ -1,23 +1,50 @@
-# DeepSeek User Message Markdown Renderer (Userscript)
+# DeepSeek User Message Markdown Renderer
 
-Render user messages on [DeepSeek web](https://chat.deepseek.com) with
-native-style Markdown, LaTeX math, and code highlighting. When the "edit"
-button is clicked, the message box is restored to its original content so the
-host app does not crash.
+[![CI](https://github.com/NIyueeE/deepseek-user-message-renderer/actions/workflows/ci.yml/badge.svg)](https://github.com/NIyueeE/deepseek-user-message-renderer/actions/workflows/ci.yml)
 
-The renderer **never removes** DeepSeek's original message nodes; it hides them
-with styles and mounts an additional render container. This keeps the references
-held by the host app (React) valid, so editing or re-rendering does not throw
-`NotFoundError` and crash the page.
+A userscript that renders **your own messages** on
+[DeepSeek web](https://chat.deepseek.com) with the same native-style Markdown,
+LaTeX math, and code blocks as the assistant's replies — without breaking
+editing, re-rendering, or the history-item highlight.
+
+> Tested against the current DeepSeek web build. The script relies on some
+> hashed CSS class names (e.g. `_9663006`) that DeepSeek occasionally changes;
+> a small header/class update may be needed after their big UI releases.
+
+## Features
+
+- **Native-style Markdown**: headings, paragraphs, lists, inline code, links,
+  and blockquotes rendered like DeepSeek's own markdown.
+- **LaTeX math** via KaTeX: `$...$`, `$$...$$`, `\(...\)`, `\[...\]`.
+- **Code blocks rebuilt into DeepSeek's official `md-code-block` structure**:
+  banner with the language label, native light/dark theme, corner decorations,
+  and Prism-style token colors from the page's own stylesheet.
+- **Hard line breaks preserved** in code blocks; unknown languages (e.g.
+  `mermaid`) stay as clean code blocks without console warnings.
+- **Safe editing**: clicking "edit" restores the original message before
+  DeepSeek reads it, so the editor never crashes; cancel re-renders the
+  message; empty edit placeholders are cleaned up.
+- **History highlight mirrored**: clicking a message in the history panel
+  flashes the bubble and fades it back out, matching the native behavior.
+- **Never removes DeepSeek's original nodes** — they are hidden with CSS only,
+  so the references held by the host app (React) stay valid and re-rendering
+  never throws `NotFoundError`.
 
 ## Install
 
 1. Install [Tampermonkey](https://www.tampermonkey.net/).
-2. Create a new script and paste the contents of
-   [`src/deepseek-user-message-renderer.user.js`](src/deepseek-user-message-renderer.user.js),
-   or use Tampermonkey's "Import from file" to load it directly.
-3. Open DeepSeek web. The script loads marked / highlight.js / KaTeX from CDNs
-   via `@require`.
+2. Open the raw script below — Tampermonkey will offer to install it:
+
+   <https://raw.githubusercontent.com/NIyueeE/deepseek-user-message-renderer/main/src/deepseek-user-message-renderer.user.js>
+
+   Or copy the contents of
+   [`src/deepseek-user-message-renderer.user.js`](src/deepseek-user-message-renderer.user.js)
+   into a new Tampermonkey script manually.
+3. Open <https://chat.deepseek.com>. The script loads marked / highlight.js /
+   KaTeX from CDNs via `@require`.
+
+> The script auto-updates from GitHub when `@updateURL` / `@downloadURL` are
+> enabled in Tampermonkey.
 
 ## Development
 
@@ -34,13 +61,28 @@ bun run lint:fix  # auto-fix formatting and lint issues
   events with happy-dom, stubs the Tampermonkey APIs `GM_addStyle` and
   `GM_getResourceText`, and exposes the same `marked` version as the production
   script. Each test file runs in an isolated process.
-- [`test/render.test.ts`](test/render.test.ts): Markdown, code blocks, style
-  classes, resource injection, and keeping original nodes intact.
+- [`test/render.test.ts`](test/render.test.ts): Markdown, native `md-code-block`
+  structure, hard line breaks, style classes, resource injection, dark mode,
+  and keeping original nodes intact.
 - [`test/security.test.ts`](test/security.test.ts): dangerous HTML (event
-  handlers, `javascript:` protocol, unknown tags) is escaped; legal tags are kept.
+  handlers, `javascript:` protocol, unknown tags) is escaped; legal tags are
+  kept.
 - [`test/edit-restore.test.ts`](test/edit-restore.test.ts): restoring the
-  message box on edit click, re-rendering after submit, and skipping rendering
-  in edit state.
-- [`test/marked-quirk.test.ts`](test/marked-quirk.test.ts): documents a marked 12
-  parsing quirk (a code fence directly after a paragraph whose content is `---`
-  is treated as a setext heading) and the correct behavior with a blank line.
+  message box on edit click, re-rendering after submit, skipping rendering in
+  edit state, and mirroring the history-item highlight.
+- [`test/marked-quirk.test.ts`](test/marked-quirk.test.ts): documents a marked
+  12 parsing quirk (a code fence directly after a paragraph whose content is
+  `---` is treated as a setext heading) and the correct behavior with a blank
+  line.
+
+## CI / Release
+
+- [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs lint + tests on
+  every push and pull request.
+- [`.github/workflows/release.yml`](.github/workflows/release.yml) builds the
+  script and creates a GitHub Release for every `v*` tag. It also publishes to
+  GreasyFork / OpenUserJS when the corresponding secrets are configured.
+
+## License
+
+Released under the [MIT License](LICENSE).
