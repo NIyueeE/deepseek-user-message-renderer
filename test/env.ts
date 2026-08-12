@@ -47,8 +47,8 @@ export function setupTampermonkeyEnv(): UserscriptEnv {
         return `/* ${name} */`;
     };
 
-    // The userscript loads the same marked version from a CDN via @require in
-    // production
+    // The userscript loads the same marked version from a CDN (jsdelivr UMD
+    // build) via @require in production
     g.marked = marked;
 
     // KaTeX / highlight.js stubs that record calls for assertions
@@ -75,21 +75,29 @@ export function setupTampermonkeyEnv(): UserscriptEnv {
     };
 }
 
-/** Append a plain-text user message inside a _9663006 container and return the message node */
+/**
+ * Append a user message inside a _9663006 container and return the message
+ * node. The message holds a text element with the hashed classes DeepSeek
+ * currently uses (fbb737a4), which the userscript renders in place. The
+ * companion class _8271fc3 only marks messages with an attachment.
+ */
 export function appendUserMessage(document: Document, text: string): HTMLElement {
     const group = document.createElement("div");
     group.className = "_9663006";
 
     const message = document.createElement("div");
     message.className = "ds-message";
-    message.appendChild(document.createTextNode(text));
+    const textEl = document.createElement("div");
+    textEl.className = "fbb737a4";
+    textEl.appendChild(document.createTextNode(text));
+    message.appendChild(textEl);
 
     group.appendChild(message);
     document.body.appendChild(group);
     return message;
 }
 
-/** Mirror DeepSeek's real structure: message content wrapped in a child element */
+/** Mirror DeepSeek's real structure: the message text lives in its own element */
 export function appendWrappedUserMessage(
     document: Document,
     text: string,
@@ -100,7 +108,7 @@ export function appendWrappedUserMessage(
     const message = document.createElement("div");
     message.className = "ds-message";
     const content = document.createElement("div");
-    content.className = "ds-message-content";
+    content.className = "fbb737a4";
     content.appendChild(document.createTextNode(text));
     message.appendChild(content);
 
@@ -117,7 +125,7 @@ export function appendMessageWithActions(document: Document, text: string): Mess
     const message = document.createElement("div");
     message.className = "ds-message";
     const content = document.createElement("div");
-    content.className = "ds-message-content";
+    content.className = "fbb737a4";
     content.appendChild(document.createTextNode(text));
     message.appendChild(content);
     group.appendChild(message);
@@ -150,9 +158,20 @@ export function appendMessageWithActions(document: Document, text: string): Mess
     return { group, message, content, editButton, copyButton, cancelButton };
 }
 
-/** Load the userscript (call setupTampermonkeyEnv and build the DOM first) */
+let loadUserscriptCalls = 0;
+
+/**
+ * Load the userscript (call setupTampermonkeyEnv and build the DOM first).
+ *
+ * Each call imports the userscript with a unique query string. Without this,
+ * `bun test` (no --parallel) shares one module cache across all test files, so
+ * the userscript would be evaluated only once, against the first file's
+ * globals, and every other file would silently test an environment the script
+ * never ran in. A fresh evaluation per call makes each file self-contained.
+ */
 export async function loadUserscript(): Promise<void> {
-    await import("../src/deepseek-user-message-renderer.user.js");
+    loadUserscriptCalls += 1;
+    await import(`../src/deepseek-user-message-renderer.user.js?test-run=${loadUserscriptCalls}`);
 }
 
 /** Flush microtasks and a few macrotasks so MutationObserver callbacks can run */

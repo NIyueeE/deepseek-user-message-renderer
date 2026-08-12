@@ -12,7 +12,8 @@
 ## 功能特性
 
 - **原生风格 Markdown**:标题、段落、列表、行内代码、链接、引用块,渲染效果与
-  DeepSeek 自己的 Markdown 一致。
+  DeepSeek 自己的 Markdown 一致;单个换行按软换行(GFM 风格)渲染为换行,
+  多行输入保持原有的换行。
 - **LaTeX 公式**(KaTeX):`$...$`、`$$...$$`、`\(...\)`、`\[...\]`。
 - **代码块重建为 DeepSeek 官方 `md-code-block` 结构**:带语言标签的横幅、
   原生浅色/深色主题、角标装饰,以及页面自带样式表中的 Prism 风格 token 配色。
@@ -20,10 +21,14 @@
   不会在控制台产生警告。
 - **安全的编辑流程**:点击"编辑"会在 DeepSeek 读取内容前恢复原始消息,编辑器
   不会崩溃;取消编辑后重新渲染;空的编辑占位节点会被清理。
-- **历史消息高亮同步**:点击历史面板中的消息时,气泡会闪亮并渐变消失,
-  与官方行为一致。
-- **绝不删除 DeepSeek 的原始节点**——只用 CSS 隐藏,宿主应用(React)持有的
-  引用始终有效,重新渲染永远不会抛出 `NotFoundError`。
+- **原地渲染**:直接选中原始消息文本元素(哈希类名 `fbb737a4`;`_8271fc3`
+  仅标记带附件的消息)原地变换为 DeepSeek 原生 `ds-markdown` 结构(段落带
+  `ds-markdown-paragraph`),不新建气泡、不隐藏任何节点——附件卡片和原生
+  气泡布局自然保持完整。
+- **原生历史高亮**:原始气泡从未被替换,历史面板的高亮效果原生生效,
+  无需任何镜像逻辑。
+- **绝不删除或隐藏 DeepSeek 的原始节点**——文本元素原地渲染,宿主应用
+  (React)持有的引用始终有效,重新渲染永远不会抛出 `NotFoundError`。
 
 ## 安装
 
@@ -59,10 +64,10 @@ bun run lint:fix  # 自动修复格式和 lint 问题
 - [`test/security.test.ts`](test/security.test.ts):危险 HTML(事件处理器、
   `javascript:` 协议、未知标签)会被转义;合法标签保留。
 - [`test/edit-restore.test.ts`](test/edit-restore.test.ts):编辑点击时恢复消息框、
-  提交后重新渲染、编辑状态下跳过渲染,以及历史消息高亮镜像。
-- [`test/marked-quirk.test.ts`](test/marked-quirk.test.ts):记录 marked 12 的
-  一个解析怪癖(段落内容为 `---` 时,紧随其后的代码围栏会被当作 setext 标题)
-  以及空行分隔时的正确行为。
+  提交后重新渲染、编辑状态下跳过渲染。
+- [`test/marked-quirk.test.ts`](test/marked-quirk.test.ts):marked 18 的回归
+  防护(段落内容为 `---` 时,紧随其后的代码围栏正常解析为代码块;marked 12
+  及以下版本会误判为 setext 标题)。
 
 ## CI / 发布
 

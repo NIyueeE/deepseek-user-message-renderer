@@ -14,7 +14,7 @@
         "@biomejs/biome": "^2.5.7",
         "@types/bun": "latest",
         "happy-dom": "^20.11.2",
-        "marked": "12.0.0",
+        "marked": "18.0.9",
         "typescript": "^5"
     }
 }

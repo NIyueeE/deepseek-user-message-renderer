@@ -14,7 +14,8 @@ editing, re-rendering, or the history-item highlight.
 ## Features
 
 - **Native-style Markdown**: headings, paragraphs, lists, inline code, links,
-  and blockquotes rendered like DeepSeek's own markdown.
+  and blockquotes rendered like DeepSeek's own markdown; a single newline is a
+  soft line break (GFM style), so multi-line input keeps its line breaks.
 - **LaTeX math** via KaTeX: `$...$`, `$$...$$`, `\(...\)`, `\[...\]`.
 - **Code blocks rebuilt into DeepSeek's official `md-code-block` structure**:
   banner with the language label, native light/dark theme, corner decorations,
@@ -24,11 +25,16 @@ editing, re-rendering, or the history-item highlight.
 - **Safe editing**: clicking "edit" restores the original message before
   DeepSeek reads it, so the editor never crashes; cancel re-renders the
   message; empty edit placeholders are cleaned up.
-- **History highlight mirrored**: clicking a message in the history panel
-  flashes the bubble and fades it back out, matching the native behavior.
-- **Never removes DeepSeek's original nodes** — they are hidden with CSS only,
-  so the references held by the host app (React) stay valid and re-rendering
-  never throws `NotFoundError`.
+- **In-place rendering**: the original message text element (hashed class
+  `fbb737a4`; `_8271fc3` only marks messages with an attachment) is transformed
+  into DeepSeek's native `ds-markdown` structure (paragraphs carry
+  `ds-markdown-paragraph`), so no extra bubble is created and nothing is
+  hidden — attachment cards and the native bubble layout stay intact.
+- **Native history highlight**: because the original bubble is never replaced,
+  DeepSeek's history-item highlight works as-is without any mirroring.
+- **Never removes or hides DeepSeek's original nodes** — the text element is
+  rendered in place, so the references held by the host app (React) stay valid
+  and re-rendering never throws `NotFoundError`.
 
 ## Install
 
@@ -69,11 +75,10 @@ bun run lint:fix  # auto-fix formatting and lint issues
   kept.
 - [`test/edit-restore.test.ts`](test/edit-restore.test.ts): restoring the
   message box on edit click, re-rendering after submit, skipping rendering in
-  edit state, and mirroring the history-item highlight.
-- [`test/marked-quirk.test.ts`](test/marked-quirk.test.ts): documents a marked
-  12 parsing quirk (a code fence directly after a paragraph whose content is
-  `---` is treated as a setext heading) and the correct behavior with a blank
-  line.
+  edit state.
+- [`test/marked-quirk.test.ts`](test/marked-quirk.test.ts): regression guard
+  for marked 18 (a code fence directly after a paragraph whose content is
+  `---` parses as a code block; marked <=12 misparsed it as a setext heading).
 
 ## CI / Release
 

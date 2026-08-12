@@ -23,9 +23,12 @@ describe("HTML safety policy", () => {
     });
 
     test("escapes javascript: protocol links", () => {
-        expect(dangerous.querySelector("a")).toBeNull();
-        expect(dangerous.innerHTML).toContain("&lt;a");
-        expect(dangerous.innerHTML).not.toContain("<a ");
+        const rendered = dangerous.querySelector(".fbb737a4");
+        // Assert on the rendered children only: dataset attributes on the
+        // container hold the raw Markdown and would trip substring checks
+        expect(rendered?.querySelector("a")).toBeNull();
+        expect(rendered?.innerHTML).toContain("&lt;a");
+        expect(rendered?.innerHTML).not.toContain("<a ");
     });
 
     test("escapes unknown tags", () => {
