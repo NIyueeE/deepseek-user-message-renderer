@@ -70,8 +70,10 @@ bun run lint:fix  # auto-fix formatting and lint issues
 - [`test/render.test.ts`](test/render.test.ts): Markdown, native `md-code-block`
   structure, hard line breaks, style classes, resource injection, dark mode,
   and keeping original nodes intact.
-- [`test/security.test.ts`](test/security.test.ts): dangerous HTML (event
-  handlers, `javascript:` protocol, unknown tags) is escaped; legal tags are
+- [`test/security.test.ts`](test/security.test.ts): dangerous HTML is escaped —
+  blocked tags (`iframe` / `base` / `meta` / `form` / `style` / ...), event
+  handlers, dangerous URL schemes (including character-reference smuggling),
+  and unsafe Markdown links/images; safe tags and harmless attribute values are
   kept.
 - [`test/edit-restore.test.ts`](test/edit-restore.test.ts): restoring the
   message box on edit click, re-rendering after submit, skipping rendering in

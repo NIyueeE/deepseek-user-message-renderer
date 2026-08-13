@@ -2,7 +2,7 @@
 // @name         DeepSeek User Message Markdown Renderer
 // @name:zh-CN   DeepSeek 用户消息 Markdown 渲染器
 // @namespace    http://tampermonkey.net/
-// @version      1.0.6
+// @version      1.0.7
 // @description  Render your own messages on DeepSeek web with native-style Markdown, LaTeX math, and official code blocks; safe editing and history highlight included.
 // @description:zh-CN  让 DeepSeek 网页版中你自己发送的消息以原生样式渲染 Markdown、LaTeX 公式和官方风格代码块;支持安全编辑与历史消息高亮。
 // @author       NIyueeE
@@ -75,7 +75,9 @@
     }
 
     const HTML_TAG_RE = /^<\/?([a-zA-Z][a-zA-Z0-9-]*)(?:\s+(?:"[^"]*"|'[^']*'|[^\s"'>])+)*\s*\/?>$/;
-    const DANGEROUS_HTML_RE = /\son\w+\s*=|(?:javascript|vbscript|data):|\bsrcdoc\s*=/i;
+    const OPEN_TAG_RE = /^<([a-zA-Z][a-zA-Z0-9-]*)(?:\s+(?:"[^"]*"|'[^']*'|[^\s"'>])+)*\s*\/?>/;
+    const TAG_ATTR_RE = /([^\s=/>]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g;
+    const BLOCK_TAG_SCAN_RE = /<([a-zA-Z][a-zA-Z0-9-]*)(?:\s+(?:"[^"]*"|'[^']*'|[^\s"'>])+)*\s*\/?>/g;
     const VOID_TAGS = new Set([
         "area",
         "base",
@@ -92,85 +94,250 @@
         "track",
         "wbr",
     ]);
+    // Tags that can hijack or impersonate the page (phishing iframes, base/meta
+    // redirects, form exfiltration, remote CSS, autoplaying media). They are
+    // always escaped, regardless of their attributes.
+    const BLOCKED_TAGS = new Set([
+        "applet",
+        "audio",
+        "base",
+        "embed",
+        "form",
+        "frame",
+        "frameset",
+        "iframe",
+        "link",
+        "meta",
+        "noframes",
+        "object",
+        "portal",
+        "script",
+        "style",
+        "video",
+    ]);
+    // Attribute names the browser resolves as URLs: their values are checked for
+    // dangerous schemes. Other attributes (title, alt, class, ...) are never
+    // treated as dangerous, so legal tags that merely mention "data:" or
+    // "javascript:" in prose stay legal.
+    const URL_ATTRS = new Set([
+        "action",
+        "background",
+        "cite",
+        "classid",
+        "codebase",
+        "data",
+        "formaction",
+        "href",
+        "icon",
+        "longdesc",
+        "manifest",
+        "poster",
+        "profile",
+        "src",
+        "usemap",
+        "xlink:href",
+    ]);
+    const EVENT_ATTR_RE = /^on\w+$/i;
+    // Browsers decode character references in attribute values and strip tabs
+    // and newlines from URLs before parsing the scheme; mirror both steps so
+    // "jav&#x61;script:" can never slip through as a live handler.
+    const DANGEROUS_SCHEME_RE = /^(?:javascript|vbscript|data|file):/i;
+
+    function decodeAttrEntities(value) {
+        const named = {
+            amp: "&",
+            lt: "<",
+            gt: ">",
+            quot: '"',
+            apos: "'",
+            Tab: "\t",
+            NewLine: "\n",
+            nbsp: "\u00a0",
+        };
+        return value
+            .replace(/&#x([0-9a-f]+);/gi, (_, hex) => String.fromCodePoint(parseInt(hex, 16)))
+            .replace(/&#(\d+);/g, (_, dec) => String.fromCodePoint(parseInt(dec, 10)))
+            .replace(/&(amp|lt|gt|quot|apos|Tab|NewLine|nbsp);/g, (_, name) => named[name]);
+    }
 
     function isKnownElement(tagName) {
         try {
-            return !(document.createElement(tagName) instanceof HTMLUnknownElement);
+            // createElement is case-insensitive for known elements in browsers;
+            // lowercase first so happy-dom and real browsers agree
+            return !(document.createElement(tagName.toLowerCase()) instanceof HTMLUnknownElement);
         } catch {
             return false;
         }
     }
 
+    // Any attribute that can execute code or smuggle a dangerous URL makes the
+    // whole tag illegal: event-handler names, srcdoc, and URL-valued attributes
+    // whose decoded value starts with a dangerous scheme
+    function hasUnsafeAttrs(tagText) {
+        TAG_ATTR_RE.lastIndex = 0;
+        for (let m = TAG_ATTR_RE.exec(tagText); m !== null; m = TAG_ATTR_RE.exec(tagText)) {
+            const name = m[1].toLowerCase();
+            const value = m[2] ?? m[3] ?? m[4] ?? "";
+            if (EVENT_ATTR_RE.test(name) || name === "srcdoc") {
+                return true;
+            }
+            if (URL_ATTRS.has(name)) {
+                const decoded = decodeAttrEntities(value).replace(/[\t\n\r]/g, "");
+                if (DANGEROUS_SCHEME_RE.test(decoded)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
     // Single tag (open/close): render as HTML only if the element name is legal,
-    // attributes carry no event handlers, and no dangerous protocol is used
+    // not blocked, and carries no unsafe attribute
     function isLegalHtmlTag(text) {
         const match = HTML_TAG_RE.exec(text.trim());
         if (!match || !isKnownElement(match[1])) {
             return false;
         }
-        return !DANGEROUS_HTML_RE.test(text);
+        if (BLOCKED_TAGS.has(match[1].toLowerCase())) {
+            return false;
+        }
+        return !hasUnsafeAttrs(text);
     }
 
     // Block-level HTML (marked merges things like <div>...</div> into one token):
-    // render only when the opening tag is legal, the closing tag matches, and the
-    // whole block contains nothing dangerous
+    // render only when the opening tag is legal, the closing tag matches, and
+    // every tag inside the block is legal too (inner tags such as <img onerror>
+    // are live HTML just like the outer one)
     function isLegalHtmlBlock(text) {
         const trimmed = text.trim();
-        const open = /^<([a-zA-Z][a-zA-Z0-9-]*)(?:\s+(?:"[^"]*"|'[^']*'|[^\s"'>])+)*\s*\/?>/.exec(trimmed);
-        if (!open || !isKnownElement(open[1]) || DANGEROUS_HTML_RE.test(text)) {
+        const open = OPEN_TAG_RE.exec(trimmed);
+        if (!open || !isKnownElement(open[1]) || BLOCKED_TAGS.has(open[1].toLowerCase())) {
             return false;
         }
-        if (VOID_TAGS.has(open[1])) {
+        if (VOID_TAGS.has(open[1].toLowerCase())) {
             return open[0] === trimmed;
         }
-        return new RegExp(`</${open[1]}>\\s*$`).test(trimmed);
+        if (!new RegExp(`</${open[1]}>\\s*$`, "i").test(trimmed)) {
+            return false;
+        }
+        BLOCK_TAG_SCAN_RE.lastIndex = 0;
+        for (let m = BLOCK_TAG_SCAN_RE.exec(trimmed); m !== null; m = BLOCK_TAG_SCAN_RE.exec(trimmed)) {
+            const name = m[1].toLowerCase();
+            if (BLOCKED_TAGS.has(name) || hasUnsafeAttrs(m[0])) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    function isSafeUrl(value) {
+        if (!value) {
+            return true;
+        }
+        const decoded = decodeAttrEntities(value)
+            .replace(/[\t\n\r]/g, "")
+            .trim();
+        return !DANGEROUS_SCHEME_RE.test(decoded);
+    }
+
+    function isSafeImageUrl(value) {
+        if (!value) {
+            return true;
+        }
+        const decoded = decodeAttrEntities(value)
+            .replace(/[\t\n\r]/g, "")
+            .trim();
+        if (/^(?:javascript|vbscript|file):/i.test(decoded)) {
+            return false;
+        }
+        // data: URIs are acceptable for images (they cannot execute); other
+        // data: payloads are not
+        return !/^data:/i.test(decoded) || /^data:image\//i.test(decoded);
     }
 
     // Names of opening tags judged illegal and escaped; their matching closing
-    // tags are also escaped so the original text is preserved completely
-    const blockedTags = new Set();
+    // tags are also escaped so the original text is preserved completely. The
+    // set is scoped to a single parse (see parseMarkdown) so one message's
+    // state can never leak into another message's render.
+    let activeBlockedTags = null;
 
+    function parseMarkdown(text) {
+        activeBlockedTags = new Set();
+        try {
+            return md.parse(text);
+        } finally {
+            activeBlockedTags = null;
+        }
+    }
+
+    const mdRenderer = {
+        html(token) {
+            const text = typeof token === "string" ? token : token.text || "";
+            const trimmed = text.trim();
+
+            // Handle closing tags first (e.g. </a>) to avoid misreading them
+            // as block-level HTML
+            const close = /^<\/\s*([a-zA-Z][a-zA-Z0-9-]*)\s*>/.exec(trimmed);
+            if (close) {
+                const name = close[1].toLowerCase();
+                if (activeBlockedTags?.delete(name)) {
+                    return escapeHtml(text, /\n/.test(text));
+                }
+                if (isKnownElement(name) && !BLOCKED_TAGS.has(name)) {
+                    return text;
+                }
+                return escapeHtml(text, /\n/.test(text));
+            }
+
+            // Block-level HTML (marked merges things like <div>...</div> into
+            // a single token)
+            if (/\n/.test(text) || /<\/[a-zA-Z][a-zA-Z0-9-]*\s*>/.test(text)) {
+                return isLegalHtmlBlock(text) ? text : escapeHtml(text, true);
+            }
+
+            const open = /^<([a-zA-Z][a-zA-Z0-9-]*)/.exec(trimmed);
+            if (open && !/^<[!?]/.test(trimmed)) {
+                const name = open[1].toLowerCase();
+                if (isLegalHtmlTag(text)) {
+                    activeBlockedTags?.delete(name);
+                    return text;
+                }
+                activeBlockedTags?.add(name);
+                return escapeHtml(text, false);
+            }
+
+            return escapeHtml(text, false);
+        },
+        // Markdown links and images are not raw HTML: marked generates the
+        // anchor/img elements itself, so the html() policy never sees them.
+        // Validate the destination here (the default renderer would emit the
+        // dangerous URL verbatim) and render the text only when it is unsafe.
+        link({ href, title, tokens, text }) {
+            const inner = this.parser ? this.parser.parseInline(tokens) : escapeHtml(text ?? "");
+            if (!isSafeUrl(href)) {
+                return inner;
+            }
+            return `<a href="${escapeHtml(href)}"${title ? ` title="${escapeHtml(title)}"` : ""}>${inner}</a>`;
+        },
+        image({ href, title, text }) {
+            if (!isSafeImageUrl(href)) {
+                return escapeHtml(text ?? "");
+            }
+            return `<img src="${escapeHtml(href)}" alt="${escapeHtml(text ?? "")}"${title ? ` title="${escapeHtml(title)}"` : ""}>`;
+        },
+    };
+
+    // Configure a private marked instance so the page-global `marked` (shared
+    // with any other scripts) is never mutated; fall back to configuring the
+    // shared instance only on very old UMD builds without the Marked constructor
+    let md = null;
     if (typeof marked !== "undefined") {
-        marked.use({
-            breaks: true,
-            renderer: {
-                html(token) {
-                    const text = typeof token === "string" ? token : token.text || "";
-                    const trimmed = text.trim();
-
-                    // Handle closing tags first (e.g. </a>) to avoid misreading
-                    // them as block-level HTML
-                    const close = /^<\/\s*([a-zA-Z][a-zA-Z0-9-]*)\s*>/.exec(trimmed);
-                    if (close) {
-                        if (blockedTags.delete(close[1])) {
-                            return escapeHtml(text, /\n/.test(text));
-                        }
-                        if (isLegalHtmlTag(text)) {
-                            return text;
-                        }
-                        return escapeHtml(text, /\n/.test(text));
-                    }
-
-                    // Block-level HTML (marked merges things like <div>...</div>
-                    // into a single token)
-                    if (/\n/.test(text) || /<\/[a-zA-Z][a-zA-Z0-9-]*\s*>/.test(text)) {
-                        return isLegalHtmlBlock(text) ? text : escapeHtml(text, true);
-                    }
-
-                    const open = /^<([a-zA-Z][a-zA-Z0-9-]*)/.exec(trimmed);
-                    if (open && !/^<[!?]/.test(trimmed)) {
-                        if (isLegalHtmlTag(text)) {
-                            blockedTags.delete(open[1]);
-                            return text;
-                        }
-                        blockedTags.add(open[1]);
-                        return escapeHtml(text, false);
-                    }
-
-                    return escapeHtml(text, false);
-                },
-            },
-        });
+        if (typeof marked.Marked === "function") {
+            md = new marked.Marked({ breaks: true, renderer: mdRenderer });
+        } else {
+            marked.use({ breaks: true, renderer: mdRenderer });
+            md = marked;
+        }
     }
 
     // 2.5 Code blocks: rebuild marked's <pre><code> into DeepSeek's native
@@ -386,22 +553,138 @@
     // three or more blank lines produce visible empty lines. Runs are rewritten
     // so marked keeps everything in one paragraph: the first newline stays a
     // soft break and each extra newline becomes a backslash hard break.
-    // Blank lines inside code fences are left untouched, and a blank line is
-    // preserved before fence openers: standard Markdown formatting, and a
-    // guard against setext misparsing (marked <=12 treated a fence directly
-    // after a paragraph as a heading when its content started with ---;
-    // see test/marked-quirk.test.ts).
-    function collapseBlankLinesOutsideFences(text) {
-        const fence = /(`{3,}|~{3,})[\s\S]*?\1/g;
-        let result = "";
-        let last = 0;
-        for (let match = fence.exec(text); match !== null; match = fence.exec(text)) {
-            result += collapseBlankRuns(text.slice(last, match.index), true);
-            result += match[0];
-            last = fence.lastIndex;
+    // The scanner mirrors CommonMark's code constructs instead of guessing with
+    // a regex: block fences (3+ backticks or tildes at line start, closed by a
+    // run of the same character with at least the opening length) and inline
+    // code spans (a backtick string closed by a backtick string of equal
+    // length) keep their content verbatim — including blank lines — and a
+    // blank line is preserved before fence openers: standard Markdown
+    // formatting, plus a guard against setext misparsing (marked <=12 treated a
+    // fence directly after a paragraph as a heading when its content started
+    // with ---; see test/marked-quirk.test.ts).
+    const FENCE_OPEN_RE = /^[ \t]{0,3}(`{3,}|~{3,})/;
+    const FENCE_CLOSE_RE = /^[ \t]{0,3}([`~]+)[ \t]*$/;
+
+    function findBacktickRun(str, exactLen) {
+        for (let i = 0; i < str.length; i++) {
+            if (str[i] !== "`") {
+                continue;
+            }
+            let j = i;
+            while (j < str.length && str[j] === "`") {
+                j += 1;
+            }
+            const len = j - i;
+            if (exactLen === undefined || len === exactLen) {
+                return { index: i, len };
+            }
+            i = j - 1;
         }
-        result += collapseBlankRuns(text.slice(last), false);
-        return result;
+        return null;
+    }
+
+    function isEscaped(str, index) {
+        let slashes = 0;
+        for (let i = index - 1; i >= 0 && str[i] === "\\"; i--) {
+            slashes += 1;
+        }
+        return slashes % 2 === 1;
+    }
+
+    function collapseBlankLinesOutsideFences(text) {
+        const lines = text.split("\n");
+        let out = "";
+        let pending = ""; // normal text accumulated since the last fence/span
+        let fence = null; // { char, len } when inside a block fence
+        let fenceContent = "";
+        let spanLen = 0; // >0 when inside an inline code span
+        let spanContent = "";
+
+        for (const line of lines) {
+            if (fence) {
+                const close = FENCE_CLOSE_RE.exec(line);
+                if (close && close[1][0] === fence.char && close[1].length >= fence.len) {
+                    out += collapseBlankRuns(pending, true);
+                    pending = "";
+                    out += fenceContent;
+                    fence = null;
+                    fenceContent = "";
+                    pending = `${line}\n`;
+                    continue;
+                }
+                fenceContent += `${line}\n`;
+                continue;
+            }
+            if (spanLen > 0) {
+                const close = findBacktickRun(line, spanLen);
+                if (close) {
+                    spanContent += line.slice(0, close.index + close.len);
+                    out += collapseBlankRuns(pending, false);
+                    pending = "";
+                    out += spanContent;
+                    spanLen = 0;
+                    spanContent = "";
+                    pending = `${line.slice(close.index + close.len)}\n`;
+                    continue;
+                }
+                spanContent += `${line}\n`;
+                continue;
+            }
+
+            // Fence opener: the whole opening line (info string included) is
+            // verbatim fence content
+            const fenceOpen = FENCE_OPEN_RE.exec(line);
+            if (fenceOpen) {
+                out += collapseBlankRuns(pending, true);
+                pending = "";
+                fence = { char: fenceOpen[1][0], len: fenceOpen[1].length };
+                fenceContent = `${line}\n`;
+                continue;
+            }
+
+            // Inline code spans: split the line into normal text and span
+            // content, handling multiple spans per line and spans that
+            // continue onto later lines
+            let rest = line;
+            let normalPart = "";
+            let continued = false;
+            for (;;) {
+                const run = findBacktickRun(rest);
+                if (!run || isEscaped(rest, run.index)) {
+                    if (!run) {
+                        normalPart += rest;
+                        break;
+                    }
+                    normalPart += rest.slice(0, run.index + run.len);
+                    rest = rest.slice(run.index + run.len);
+                    continue;
+                }
+                normalPart += rest.slice(0, run.index + run.len);
+                const after = rest.slice(run.index + run.len);
+                const close = findBacktickRun(after, run.len);
+                if (close) {
+                    normalPart += after.slice(0, close.index + close.len);
+                    rest = after.slice(close.index + close.len);
+                    continue;
+                }
+                continued = true;
+                spanLen = run.len;
+                spanContent = `${after}\n`;
+                break;
+            }
+            pending += continued ? normalPart : `${normalPart}\n`;
+        }
+
+        if (fence) {
+            out += collapseBlankRuns(pending, true);
+            out += fenceContent;
+        } else if (spanLen > 0) {
+            out += collapseBlankRuns(pending, false);
+            out += spanContent;
+        } else {
+            out += collapseBlankRuns(pending, false);
+        }
+        return out;
     }
 
     function collapseBlankRuns(text, beforeFence) {
@@ -457,7 +740,7 @@
         // Use textContent, not innerText: innerText depends on the page's
         // white-space CSS and collapses newlines to spaces when the container
         // is not pre-wrap, which would flatten code fences and code lines
-        const rawText = textEl.textContent;
+        let rawText = textEl.textContent;
         if (!rawText?.trim()) {
             // An emptied message box (DeepSeek's edit UI moved the content into
             // the editor) should go back to a clean native state
@@ -468,6 +751,19 @@
                 delete textEl.dataset.mdRenderedText;
             }
             return;
+        }
+
+        // Theme switch: code blocks carry a dark/light variant class decided at
+        // upgrade time, so when the page theme changes the rendered message
+        // must be rebuilt. The observer picks up the body class change.
+        // Re-render from the stored raw Markdown: the current textContent is
+        // the script's own render output and would re-parse as plain text.
+        const themeKey = document.body.classList.contains("dark") ? "dark" : "light";
+        if (textEl.dataset.mdRendered != null && textEl.dataset.mdTheme && textEl.dataset.mdTheme !== themeKey) {
+            if (textEl.dataset.mdRenderedText === textEl.textContent) {
+                rawText = textEl.dataset.mdRendered;
+            }
+            delete textEl.dataset.mdRenderedText;
         }
 
         // Skip if already rendered for the current text; re-render if the SPA
@@ -482,9 +778,9 @@
         //    removed and no extra bubble is created, so attachments and the
         //    native bubble layout are never touched.
         let parsed = null;
-        if (typeof marked !== "undefined") {
+        if (md) {
             try {
-                parsed = marked.parse(collapseBlankLinesOutsideFences(rawText));
+                parsed = parseMarkdown(collapseBlankLinesOutsideFences(rawText));
             } catch (err) {
                 console.error("Markdown parsing failed", err);
             }
@@ -569,6 +865,7 @@
         //    Failed renders can retry next time.
         textEl.dataset.mdRendered = rawText;
         textEl.dataset.mdRenderedText = textEl.textContent;
+        textEl.dataset.mdTheme = themeKey;
     }
 
     // 10. Edit-button restore: when DeepSeek's "edit" is clicked it reads/takes
@@ -650,7 +947,15 @@
         }, 50);
     }
 
+    // Both window and document listen in the capture phase, so every event
+    // arrives twice; only the first pass may act (restore must not run twice
+    // and schedule two cooldown timers)
+    let lastHandledEvent = null;
     function handleEditUiEvent(e) {
+        if (e === lastHandledEvent) {
+            return;
+        }
+        lastHandledEvent = e;
         // Mouse/pointer events: primary button only; keyboard events: Enter/Space
         if (e.type !== "keydown" && e.button !== undefined && e.button !== 0) {
             return;
@@ -725,12 +1030,62 @@
         });
     }
 
-    // Watch the message list for changes
+    // Only relevant mutations should trigger a scan: anything inside a user
+    // message group, new groups (appended outside any existing group), and
+    // theme changes (the body class). AI-streaming churn outside those areas is
+    // ignored, so the observer never scans the whole page per streamed token.
+    function isRelevantMutation(records) {
+        for (const record of records) {
+            if (record.type === "characterData") {
+                const parent = record.target.parentElement;
+                if (parent?.closest("._9663006") || parent === document.body) {
+                    return true;
+                }
+            } else if (record.type === "attributes") {
+                const target = record.target;
+                if (target === document.body || target.closest?.("._9663006")) {
+                    return true;
+                }
+            } else if (record.type === "childList") {
+                for (const node of [...record.addedNodes, ...record.removedNodes]) {
+                    if (node.nodeType !== 1) {
+                        if (node.parentElement?.closest("._9663006")) {
+                            return true;
+                        }
+                        continue;
+                    }
+                    // closest() covers nodes inside a group and new groups
+                    // themselves; querySelector() covers wholesale list
+                    // re-renders whose root sits outside any group
+                    if (node.closest?.("._9663006") || node.querySelector?.("._9663006")) {
+                        return true;
+                    }
+                }
+                if (record.target.closest?.("._9663006")) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    // Watch the message list for changes. characterData is observed because
+    // React updates text nodes in place via nodeValue (a characterData
+    // mutation) instead of replacing them; without it, in-place text edits
+    // would never re-render. attributes is observed for the body class so a
+    // theme switch re-renders the code blocks.
     if (document.body) {
-        const observer = new MutationObserver(scheduleProcess);
+        const observer = new MutationObserver((records) => {
+            if (isRelevantMutation(records)) {
+                scheduleProcess();
+            }
+        });
         observer.observe(document.body, {
             childList: true,
             subtree: true,
+            characterData: true,
+            attributes: true,
+            attributeFilter: ["class"],
         });
 
         processMessages();

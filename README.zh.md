@@ -61,8 +61,9 @@ bun run lint:fix  # 自动修复格式和 lint 问题
   与生产脚本相同的 `marked` 版本。每个测试文件在独立进程中运行。
 - [`test/render.test.ts`](test/render.test.ts):Markdown、原生 `md-code-block`
   结构、硬换行、样式类、资源注入、暗色模式,以及保留原始节点。
-- [`test/security.test.ts`](test/security.test.ts):危险 HTML(事件处理器、
-  `javascript:` 协议、未知标签)会被转义;合法标签保留。
+- [`test/security.test.ts`](test/security.test.ts):危险 HTML 会被转义——被禁止的
+  标签(`iframe` / `base` / `meta` / `form` / `style` 等)、事件处理器、危险 URL
+  协议(包括字符引用绕过)、不安全的 Markdown 链接/图片;安全标签和无害属性值保留。
 - [`test/edit-restore.test.ts`](test/edit-restore.test.ts):编辑点击时恢复消息框、
   提交后重新渲染、编辑状态下跳过渲染。
 - [`test/marked-quirk.test.ts`](test/marked-quirk.test.ts):marked 18 的回归

@@ -352,4 +352,82 @@ describe("user message Markdown rendering", () => {
             expect(paragraph?.textContent).toBe("复制文本。红色文字");
         });
     });
+
+    describe("fence and code-span protection", () => {
+        test("keeps blank-line collapse working after a mismatched fence close", async () => {
+            const { content } = appendWrappedUserMessage(
+                env.document,
+                ["```js", "a", "~~~", "b", "", "", "c", "```", "", "tail", "", "", "tail2"].join("\n"),
+            );
+            await settle();
+
+            // ~~~ cannot close a backtick fence, so the fence still closes at
+            // the real ```, and the blank lines after it collapse normally
+            // ("tail\n\n\ntail2" is 3 newlines → 2 line breaks)
+            const pre = content.querySelector("pre");
+            expect(pre?.textContent).toBe("a\n~~~\nb\n\n\nc\n");
+            const paragraphs = content.querySelectorAll("p");
+            expect(paragraphs.length).toBe(1);
+            expect(paragraphs[0]?.querySelectorAll("br").length).toBe(2);
+        });
+
+        test("closes a fence with a longer backtick run", async () => {
+            const { content } = appendWrappedUserMessage(
+                env.document,
+                ["```js", "x = 1", "````", "", "after", "", "end"].join("\n"),
+            );
+            await settle();
+
+            const pre = content.querySelector("pre");
+            expect(pre?.textContent).toBe("x = 1\n");
+            expect(content.querySelectorAll("p").length).toBe(1);
+        });
+
+        test("keeps blank lines inside inline code spans", async () => {
+            const { content } = appendWrappedUserMessage(env.document, "before `code\n\nmore` after");
+            await settle();
+
+            // A code span cannot cross a blank line: markdown ends the
+            // paragraph there, so the blank line must be preserved and the
+            // span splits into two paragraphs with literal backticks. The old
+            // regex collapsed the blank line away and swallowed the backticks
+            // into a flattened code span ("before code more after").
+            const paragraphs = content.querySelectorAll("p");
+            expect(paragraphs.length).toBe(2);
+            expect(paragraphs[0]?.textContent).toBe("before `code");
+            expect(paragraphs[1]?.textContent).toBe("more` after");
+        });
+    });
+
+    describe("observer-driven re-rendering", () => {
+        test("re-renders when the message text changes in place (characterData)", async () => {
+            const { content } = appendWrappedUserMessage(env.document, "**bold v1**");
+            await settle();
+            expect(content.querySelector("strong")?.textContent).toBe("bold v1");
+
+            // React updates text nodes in place via nodeValue — a characterData
+            // mutation — which the observer must pick up and re-render
+            const textNode = content.querySelector("p span")?.firstChild;
+            if (!textNode) {
+                throw new Error("fixture missing text node");
+            }
+            textNode.nodeValue = "**bold v2**";
+            await settle();
+
+            expect(content.querySelector("strong")?.textContent).toBe("bold v2");
+        });
+
+        test("re-renders code blocks when the theme changes", async () => {
+            env.document.body.classList.add("dark");
+            const { content } = appendWrappedUserMessage(env.document, "```js\nconst x = 1;\n```");
+            await settle();
+            expect(content.querySelector(".md-code-block")?.classList.contains("md-code-block-dark")).toBeTrue();
+
+            env.document.body.classList.remove("dark");
+            await settle();
+            const block = content.querySelector(".md-code-block");
+            expect(block?.classList.contains("md-code-block-light")).toBeTrue();
+            expect(block?.classList.contains("md-code-block-dark")).toBeFalse();
+        });
+    });
 });
