@@ -24,7 +24,8 @@
 - **原地渲染**:直接选中原始消息文本元素(哈希类名 `fbb737a4`;`_8271fc3`
   仅标记带附件的消息)原地变换为 DeepSeek 原生 `ds-markdown` 结构(段落带
   `ds-markdown-paragraph`),不新建气泡、不隐藏任何节点——附件卡片和原生
-  气泡布局自然保持完整。
+  气泡布局自然保持完整。被 DeepSeek 折叠容器(`ds-collapsible-text`)包裹的
+  长消息会在该容器内部渲染,展开/收起按钮保持可用,React 持有的引用也始终有效。
 - **原生历史高亮**:原始气泡从未被替换,历史面板的高亮效果原生生效,
   无需任何镜像逻辑。
 - **绝不删除或隐藏 DeepSeek 的原始节点**——文本元素原地渲染,宿主应用
@@ -66,6 +67,9 @@ bun run lint:fix  # 自动修复格式和 lint 问题
   协议(包括字符引用绕过)、不安全的 Markdown 链接/图片;安全标签和无害属性值保留。
 - [`test/edit-restore.test.ts`](test/edit-restore.test.ts):编辑点击时恢复消息框、
   提交后重新渲染、编辑状态下跳过渲染。
+- [`test/collapsible.test.ts`](test/collapsible.test.ts):被折叠容器包裹的长消息
+  在容器内部渲染,折叠容器和展开/收起按钮保持完整;编辑还原与取消重渲染
+  在该结构下同样正常。
 - [`test/marked-quirk.test.ts`](test/marked-quirk.test.ts):marked 18 的回归
   防护(段落内容为 `---` 时,紧随其后的代码围栏正常解析为代码块;marked 12
   及以下版本会误判为 setext 标题)。

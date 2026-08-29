@@ -2,7 +2,7 @@
 // @name         DeepSeek User Message Markdown Renderer
 // @name:zh-CN   DeepSeek 用户消息 Markdown 渲染器
 // @namespace    http://tampermonkey.net/
-// @version      1.0.7
+// @version      1.0.8
 // @description  Render your own messages on DeepSeek web with native-style Markdown, LaTeX math, and official code blocks; safe editing and history highlight included.
 // @description:zh-CN  让 DeepSeek 网页版中你自己发送的消息以原生样式渲染 Markdown、LaTeX 公式和官方风格代码块;支持安全编辑与历史消息高亮。
 // @author       NIyueeE
@@ -54,6 +54,28 @@
     // `ds-assistant-message-main-content` carries assistant-column layout
     // rules (line-height, paragraph spacing) that make user bubbles too loose.
     const MARKDOWN_CONTAINER_CLASSES = ["ds-markdown"];
+
+    // Newer DeepSeek builds wrap long user messages in a collapsible container:
+    // fbb737a4 > div.ds-collapsible-text (clipped via an inline max-height, with
+    // the measured height set inline too) plus a sibling
+    // div.ds-collapsible-text-toggle-button that expands/collapses it. Rendering
+    // must happen inside that container: replacing fbb737a4's children wholesale
+    // would destroy the wrapper and the toggle, break the collapse UI, and make
+    // the host app (React) throw when it reconciles its removed nodes. Short
+    // messages keep the flat structure and still render into fbb737a4 directly.
+    const COLLAPSIBLE_TEXT_CLASS = "ds-collapsible-text";
+
+    // The element whose content this script manages: the collapsible container
+    // when the message is wrapped in one, otherwise the text element itself.
+    // It carries the markdown classes and all md-rendered dataset markers.
+    function resolveContentEl(textEl) {
+        for (const child of Array.from(textEl.children)) {
+            if (child.classList.contains(COLLAPSIBLE_TEXT_CLASS)) {
+                return child;
+            }
+        }
+        return textEl;
+    }
 
     // 2. Configure marked
     //    - html: legal HTML tags render as native HTML; illegal ones (unknown tags,
@@ -730,25 +752,35 @@
             return;
         }
 
+        // Render into DeepSeek's collapsible container when the message is
+        // wrapped in one; everything below operates on that element
+        const contentEl = resolveContentEl(textEl);
+
         // Right after an edit-button restore, give the host app a moment to set up
         // its editor without the observer racing in and re-rendering the message
-        const restoredAt = Number(textEl.dataset.mdRestoredAt) || 0;
+        const restoredAt = Number(contentEl.dataset.mdRestoredAt) || 0;
         if (restoredAt && Date.now() - restoredAt < RESTORE_COOLDOWN_MS) {
             return;
         }
 
         // Use textContent, not innerText: innerText depends on the page's
         // white-space CSS and collapses newlines to spaces when the container
-        // is not pre-wrap, which would flatten code fences and code lines
-        let rawText = textEl.textContent;
-        if (!rawText?.trim()) {
+        // is not pre-wrap, which would flatten code fences and code lines.
+        // Read from the render target: for collapsible messages the toggle
+        // button is a sibling inside the text element and must never leak
+        // into the parsed text.
+        // Trim DOM whitespace around the message text: wrapper elements may
+        // carry indentation-only text nodes, and leading spaces beyond three
+        // would break fence detection (the message is its trimmed text)
+        let rawText = (contentEl.textContent ?? "").trim();
+        if (!rawText) {
             // An emptied message box (DeepSeek's edit UI moved the content into
             // the editor) should go back to a clean native state
-            if (textEl.classList.contains("ds-markdown")) {
-                textEl.classList.remove(...MARKDOWN_CONTAINER_CLASSES);
-                textEl.style.whiteSpace = "";
-                delete textEl.dataset.mdRendered;
-                delete textEl.dataset.mdRenderedText;
+            if (contentEl.classList.contains("ds-markdown")) {
+                contentEl.classList.remove(...MARKDOWN_CONTAINER_CLASSES);
+                contentEl.style.whiteSpace = "";
+                delete contentEl.dataset.mdRendered;
+                delete contentEl.dataset.mdRenderedText;
             }
             return;
         }
@@ -759,24 +791,31 @@
         // Re-render from the stored raw Markdown: the current textContent is
         // the script's own render output and would re-parse as plain text.
         const themeKey = document.body.classList.contains("dark") ? "dark" : "light";
-        if (textEl.dataset.mdRendered != null && textEl.dataset.mdTheme && textEl.dataset.mdTheme !== themeKey) {
-            if (textEl.dataset.mdRenderedText === textEl.textContent) {
-                rawText = textEl.dataset.mdRendered;
+        if (
+            contentEl.dataset.mdRendered != null &&
+            contentEl.dataset.mdTheme &&
+            contentEl.dataset.mdTheme !== themeKey
+        ) {
+            if (contentEl.dataset.mdRenderedText === (contentEl.textContent ?? "").trim()) {
+                rawText = contentEl.dataset.mdRendered;
             }
-            delete textEl.dataset.mdRenderedText;
+            delete contentEl.dataset.mdRenderedText;
         }
 
         // Skip if already rendered for the current text; re-render if the SPA
-        // updated the text in place. mdRenderedText is the text of the last
-        // render output, so it only matches content this script produced.
-        if (textEl.dataset.mdRenderedText === rawText) {
+        // updated the text in place. mdRenderedText stores the trimmed text of
+        // the last render output and is compared against the trimmed input, so
+        // trailing whitespace (e.g. the newline a code fence keeps in
+        // textContent) can never make the comparison unstable.
+        if (contentEl.dataset.mdRenderedText === rawText) {
             return;
         }
 
-        // 3. Parse Markdown and render it in place: the original text element
-        //    becomes the Markdown container. No original node is hidden or
-        //    removed and no extra bubble is created, so attachments and the
-        //    native bubble layout are never touched.
+        // 3. Parse Markdown and render it in place: the render target (the
+        //    collapsible container for long messages, otherwise the text
+        //    element) becomes the Markdown container. No original node is
+        //    hidden or removed and no extra bubble is created, so attachments,
+        //    the native bubble layout, and the collapse toggle are never touched.
         let parsed = null;
         if (md) {
             try {
@@ -791,19 +830,19 @@
         }
         if (parsed == null) {
             // Fallback: keep the raw text visible, preserving line breaks
-            textEl.textContent = rawText.replace(/\s+$/, "");
-            textEl.style.whiteSpace = "pre-wrap";
+            contentEl.textContent = rawText.replace(/\s+$/, "");
+            contentEl.style.whiteSpace = "pre-wrap";
         } else {
-            textEl.innerHTML = parsed;
-            removeWhitespaceOnlyTextNodes(textEl);
-            textEl.style.whiteSpace = "";
+            contentEl.innerHTML = parsed;
+            removeWhitespaceOnlyTextNodes(contentEl);
+            contentEl.style.whiteSpace = "";
         }
-        textEl.classList.add(...MARKDOWN_CONTAINER_CLASSES);
+        contentEl.classList.add(...MARKDOWN_CONTAINER_CLASSES);
 
         // 4. Add the official style class to paragraph nodes and wrap text
         //    segments in <span class=""> like DeepSeek's native renderer
         //    (must run before KaTeX so math output is untouched)
-        textEl.querySelectorAll("p").forEach((p) => {
+        contentEl.querySelectorAll("p").forEach((p) => {
             p.classList.add("ds-markdown-paragraph");
             wrapTextSegments(p);
         });
@@ -811,7 +850,7 @@
         // 5. Render LaTeX math
         if (typeof renderMathInElement === "function") {
             try {
-                renderMathInElement(textEl, {
+                renderMathInElement(contentEl, {
                     delimiters: [
                         { left: "$$", right: "$$", display: true },
                         { left: "$", right: "$", display: false },
@@ -828,7 +867,7 @@
         // 6. Apply code syntax highlighting
         if (typeof hljs !== "undefined" && typeof hljs.highlightElement === "function") {
             try {
-                textEl.querySelectorAll("pre code").forEach((block) => {
+                contentEl.querySelectorAll("pre code").forEach((block) => {
                     // Skip languages hljs does not know (e.g. mermaid, text):
                     // highlightElement would log a console warning and fall back
                     // to no highlighting anyway
@@ -848,7 +887,7 @@
 
         // 7. Rebuild code blocks into DeepSeek's native md-code-block structure
         //    so the page's built-in CSS renders them like native code blocks
-        textEl.querySelectorAll("pre code").forEach((codeEl) => {
+        contentEl.querySelectorAll("pre code").forEach((codeEl) => {
             try {
                 if (codeEl.parentElement) {
                     upgradeCodeBlock(codeEl.parentElement);
@@ -859,13 +898,13 @@
         });
 
         // 8. Mark only after a successful render: mdRendered stores the raw
-        //    Markdown (restored on edit click), mdRenderedText stores the text
-        //    of the render output, which is what the next scan reads, so the
-        //    dedup check above stops the observer from re-rendering in a loop.
-        //    Failed renders can retry next time.
-        textEl.dataset.mdRendered = rawText;
-        textEl.dataset.mdRenderedText = textEl.textContent;
-        textEl.dataset.mdTheme = themeKey;
+        //    Markdown (restored on edit click), mdRenderedText stores the
+        //    trimmed text of the render output, which is what the next scan
+        //    reads, so the dedup check above stops the observer from
+        //    re-rendering in a loop. Failed renders can retry next time.
+        contentEl.dataset.mdRendered = rawText;
+        contentEl.dataset.mdRenderedText = (contentEl.textContent ?? "").trim();
+        contentEl.dataset.mdTheme = themeKey;
     }
 
     // 10. Edit-button restore: when DeepSeek's "edit" is clicked it reads/takes
@@ -898,25 +937,31 @@
 
     function restoreUserMessage(msgNode) {
         const textEl = msgNode.querySelector(USER_TEXT_SELECTOR);
+        if (!textEl?.isConnected) {
+            return;
+        }
+        const contentEl = resolveContentEl(textEl);
         // Only touch messages rendered by this script; leave native ones alone
-        if (!textEl?.isConnected || textEl.dataset.mdRendered == null) {
+        if (contentEl.dataset.mdRendered == null) {
             return;
         }
 
-        // Put the raw Markdown back so the host app reads the original content,
-        // and drop the injected classes so the page styles it natively again.
-        // A cooldown window blocks the observer while the editor is set up.
-        textEl.textContent = textEl.dataset.mdRendered;
-        textEl.classList.remove(...MARKDOWN_CONTAINER_CLASSES);
-        textEl.style.whiteSpace = "";
-        delete textEl.dataset.mdRenderedText;
-        textEl.dataset.mdRestoredAt = String(Date.now());
+        // Put the raw Markdown back into the render target (inside the
+        // collapsible container when present, so the toggle stays intact) so
+        // the host app reads the original content, and drop the injected
+        // classes so the page styles it natively again. A cooldown window
+        // blocks the observer while the editor is set up.
+        contentEl.textContent = contentEl.dataset.mdRendered;
+        contentEl.classList.remove(...MARKDOWN_CONTAINER_CLASSES);
+        contentEl.style.whiteSpace = "";
+        delete contentEl.dataset.mdRenderedText;
+        contentEl.dataset.mdRestoredAt = String(Date.now());
 
         // After the cooldown, re-check the message once: if the edit was submitted
         // and the text changed, render the new content; if the editor is still
         // active, the input-control guard skips it
         setTimeout(() => {
-            delete textEl.dataset.mdRestoredAt;
+            delete contentEl.dataset.mdRestoredAt;
             try {
                 renderUserMessage(textEl);
             } catch (err) {
@@ -931,13 +976,17 @@
     // edit UI first; the observer also picks it up if DeepSeek mutates the node.
     function reRenderRestoredMessage(msgNode) {
         const textEl = msgNode.querySelector(USER_TEXT_SELECTOR);
-        // Only messages restored by this script can be re-rendered on cancel
-        if (!textEl || textEl.dataset.mdRendered == null) {
+        if (!textEl) {
             return;
         }
-        delete textEl.dataset.mdRendered;
-        delete textEl.dataset.mdRenderedText;
-        delete textEl.dataset.mdRestoredAt;
+        const contentEl = resolveContentEl(textEl);
+        // Only messages restored by this script can be re-rendered on cancel
+        if (contentEl.dataset.mdRendered == null) {
+            return;
+        }
+        delete contentEl.dataset.mdRendered;
+        delete contentEl.dataset.mdRenderedText;
+        delete contentEl.dataset.mdRestoredAt;
         setTimeout(() => {
             try {
                 renderUserMessage(textEl);

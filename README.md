@@ -29,7 +29,10 @@ editing, re-rendering, or the history-item highlight.
   `fbb737a4`; `_8271fc3` only marks messages with an attachment) is transformed
   into DeepSeek's native `ds-markdown` structure (paragraphs carry
   `ds-markdown-paragraph`), so no extra bubble is created and nothing is
-  hidden — attachment cards and the native bubble layout stay intact.
+  hidden — attachment cards and the native bubble layout stay intact. Long
+  messages wrapped in DeepSeek's collapsible container (`ds-collapsible-text`)
+  are rendered inside that container, so the expand/collapse toggle keeps
+  working and React's references stay valid.
 - **Native history highlight**: because the original bubble is never replaced,
   DeepSeek's history-item highlight works as-is without any mirroring.
 - **Never removes or hides DeepSeek's original nodes** — the text element is
@@ -78,6 +81,10 @@ bun run lint:fix  # auto-fix formatting and lint issues
 - [`test/edit-restore.test.ts`](test/edit-restore.test.ts): restoring the
   message box on edit click, re-rendering after submit, skipping rendering in
   edit state.
+- [`test/collapsible.test.ts`](test/collapsible.test.ts): long messages wrapped
+  in DeepSeek's collapsible container render inside it while the container and
+  its expand/collapse toggle stay intact; edit restore and cancel re-render
+  keep working there too.
 - [`test/marked-quirk.test.ts`](test/marked-quirk.test.ts): regression guard
   for marked 18 (a code fence directly after a paragraph whose content is
   `---` parses as a code block; marked <=12 misparsed it as a setext heading).

@@ -17,6 +17,70 @@ export interface MessageFixture {
     editButton: HTMLElement;
     copyButton: HTMLElement;
     cancelButton: HTMLElement;
+    /** ds-collapsible-text container when the collapsible variant is requested */
+    collapsible: HTMLElement | null;
+    /** ds-collapsible-text-toggle-button sibling when the collapsible variant is requested */
+    toggle: HTMLElement | null;
+}
+
+/**
+ * Build the message text element in DeepSeek's newer collapsible structure:
+ * fbb737a4 > div.ds-collapsible-text (long messages are clipped with an inline
+ * max-height and their measured height set inline) plus a sibling
+ * div.ds-collapsible-text-toggle-button that expands/collapses it.
+ */
+function buildCollapsibleContent(
+    document: Document,
+    text: string,
+): {
+    content: HTMLElement;
+    collapsible: HTMLElement;
+    toggle: HTMLElement;
+} {
+    const content = document.createElement("div");
+    content.className = "fbb737a4";
+
+    const collapsible = document.createElement("div");
+    collapsible.className = "ds-collapsible-text";
+    collapsible.setAttribute("style", "max-height: 192px; height: 432px; transition: none;");
+    const inner = document.createElement("div");
+    const span = document.createElement("span");
+    span.textContent = text;
+    inner.appendChild(span);
+    collapsible.appendChild(inner);
+    content.appendChild(collapsible);
+
+    const toggle = document.createElement("div");
+    toggle.className = "ds-collapsible-text-toggle-button _5b3c8cd";
+    toggle.innerHTML =
+        '<div class="d077096d"></div><div class="_08f18f6"><div class="ds-icon d630ec62"><svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M2.15137 8.5L2.57617 8.07617"></path></svg></div></div>';
+    content.appendChild(toggle);
+
+    return { content, collapsible, toggle };
+}
+
+/**
+ * Append a user message in the newer collapsible structure and return the
+ * message, text element, collapsible container, and toggle button.
+ */
+export function appendCollapsibleUserMessage(
+    document: Document,
+    text: string,
+): {
+    message: HTMLElement;
+    content: HTMLElement;
+    collapsible: HTMLElement;
+    toggle: HTMLElement;
+} {
+    const group = document.createElement("div");
+    group.className = "_9663006";
+    const message = document.createElement("div");
+    message.className = "ds-message";
+    const { content, collapsible, toggle } = buildCollapsibleContent(document, text);
+    message.appendChild(content);
+    group.appendChild(message);
+    document.body.appendChild(group);
+    return { message, content, collapsible, toggle };
 }
 
 /**
@@ -118,15 +182,26 @@ export function appendWrappedUserMessage(
 }
 
 /** Build a message group with action buttons (edit/copy) and return node references */
-export function appendMessageWithActions(document: Document, text: string): MessageFixture {
+export function appendMessageWithActions(
+    document: Document,
+    text: string,
+    options?: { collapsible?: boolean },
+): MessageFixture {
     const group = document.createElement("div");
     group.className = "_9663006";
 
     const message = document.createElement("div");
     message.className = "ds-message";
-    const content = document.createElement("div");
-    content.className = "fbb737a4";
-    content.appendChild(document.createTextNode(text));
+    let content: HTMLElement;
+    let collapsible: HTMLElement | null = null;
+    let toggle: HTMLElement | null = null;
+    if (options?.collapsible) {
+        ({ content, collapsible, toggle } = buildCollapsibleContent(document, text));
+    } else {
+        content = document.createElement("div");
+        content.className = "fbb737a4";
+        content.appendChild(document.createTextNode(text));
+    }
     message.appendChild(content);
     group.appendChild(message);
 
@@ -155,7 +230,7 @@ export function appendMessageWithActions(document: Document, text: string): Mess
     group.appendChild(actions);
     document.body.appendChild(group);
 
-    return { group, message, content, editButton, copyButton, cancelButton };
+    return { group, message, content, editButton, copyButton, cancelButton, collapsible, toggle };
 }
 
 let loadUserscriptCalls = 0;

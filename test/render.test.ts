@@ -137,12 +137,22 @@ describe("user message Markdown rendering", () => {
     });
 
     test("sets the mdRendered marker after rendering", () => {
-        expect(content.dataset.mdRendered).toBe(
-            ["# Title", "", "Paragraph with **bold** and `inline code`", "", "```python", "---", "```", ""].join("\n"),
-        );
-        // The dedup snapshot is the text of the render output, which is what
-        // the next scan reads; without it the observer would re-render forever
-        expect(content.dataset.mdRenderedText).toBe(content.textContent);
+        const raw = [
+            "# Title",
+            "",
+            "Paragraph with **bold** and `inline code`",
+            "",
+            "```python",
+            "---",
+            "```",
+            "",
+        ].join("\n");
+        // The stored raw Markdown is the trimmed message text
+        expect(content.dataset.mdRendered).toBe(raw.trim());
+        // The dedup snapshot is the trimmed text of the render output, which
+        // is what the next scan reads; without it the observer would re-render
+        // forever
+        expect(content.dataset.mdRenderedText).toBe(content.textContent.trim());
     });
 
     test("injects CSS resources and calls the math/highlight hooks", () => {
