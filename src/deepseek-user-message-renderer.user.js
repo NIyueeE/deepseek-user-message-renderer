@@ -2,7 +2,7 @@
 // @name         DeepSeek User Message Markdown Renderer
 // @name:zh-CN   DeepSeek 用户消息 Markdown 渲染器
 // @namespace    http://tampermonkey.net/
-// @version      1.0.9
+// @version      1.0.10
 // @description  Render your own messages on DeepSeek web with native-style Markdown, LaTeX math, and official code blocks; safe editing and history highlight included.
 // @description:zh-CN  让 DeepSeek 网页版中你自己发送的消息以原生样式渲染 Markdown、LaTeX 公式和官方风格代码块;支持安全编辑与历史消息高亮。
 // @author       NIyueeE
@@ -42,11 +42,21 @@
 
     // While the Markdown lives in a sibling container inside a collapsible
     // container, the host app's own children stay in the DOM (React must keep
-    // finding them for its commits to succeed) but out of view. Hiding through
-    // a stylesheet rule survives the host re-creating or re-writing those
-    // children at any time — which its collapse/expand commits do.
+    // finding them for its commits to succeed) but out of view. They must stay
+    // MEASURABLE: the host component derives the toggle visibility and the box
+    // heights from the content element's size, so display:none (which measures
+    // 0 and made the toggle disappear) is wrong — take the nodes out of flow
+    // with an absolute position and hide them visually instead. Their size
+    // then still reports the native text dimensions. The container itself
+    // becomes the positioning parent, and the toggle button is excluded in
+    // case a build moves it inside the container.
     try {
-        GM_addStyle("[data-md-collapsible] > :not(.md-user-markdown) { display: none !important; }");
+        GM_addStyle(
+            "[data-md-collapsible] { position: relative !important; }" +
+                "[data-md-collapsible] > :not(.md-user-markdown):not(.ds-collapsible-text-toggle-button) {" +
+                " position: absolute !important; top: 0 !important; left: 0 !important;" +
+                " width: 100% !important; visibility: hidden !important; }",
+        );
     } catch (e) {
         console.warn("Failed to inject collapsible style", e);
     }
@@ -1021,14 +1031,33 @@
         contentEl.dataset[MD_COLLAPSIBLE_ATTR] = "1";
         // Remember the host's collapsed box height so toggle handling can tell
         // collapsed from expanded later (see handleToggleClick)
-        const collapsedMax = contentEl.style.maxHeight;
-        if (collapsedMax && !COLLAPSED_MAX_HEIGHTS.has(contentEl)) {
-            COLLAPSED_MAX_HEIGHTS.set(contentEl, collapsedMax);
+        if (!COLLAPSED_MAX_HEIGHTS.has(contentEl)) {
+            COLLAPSED_MAX_HEIGHTS.set(contentEl, contentEl.style.maxHeight);
         }
+        // The message may already be expanded here (theme rebuild, or the host
+        // expanded while we rendered): lift its stale measured height so the
+        // taller Markdown is not clipped
+        liftStaleExpandedHeight(contentEl);
 
         contentEl.dataset.mdRendered = rawText;
         contentEl.dataset.mdRenderedText = markdownEl.textContent.trim();
         contentEl.dataset.mdTheme = themeKey;
+    }
+
+    // The host sizes the collapsible box to the height it measured on the
+    // native text. Our rendered Markdown is usually taller, so when the
+    // message is expanded (its max-height differs from the collapsed value
+    // captured at first render), lift the stale height to the actual content —
+    // otherwise the expanded view clips. Collapsed boxes are left untouched.
+    function liftStaleExpandedHeight(contentEl) {
+        const collapsedMax = COLLAPSED_MAX_HEIGHTS.get(contentEl);
+        if (!collapsedMax || contentEl.style.maxHeight === collapsedMax) {
+            return;
+        }
+        contentEl.style.height = "auto";
+        if (contentEl.style.maxHeight !== "none") {
+            contentEl.style.maxHeight = "none";
+        }
     }
 
     // 10. Edit-button restore: when DeepSeek's "edit" is clicked it reads/takes
@@ -1077,17 +1106,7 @@
             delete contentEl.dataset.mdToggledAt;
             try {
                 renderUserMessage(textEl);
-                // The host sizes the box to the height it measured on the
-                // native text. Our rendered Markdown is usually taller, so
-                // when the message is expanded, lift the stale measured height
-                // to the actual content — otherwise the expanded view clips.
-                const collapsedMax = COLLAPSED_MAX_HEIGHTS.get(contentEl);
-                if (collapsedMax && contentEl.style.maxHeight !== collapsedMax) {
-                    contentEl.style.height = "auto";
-                    if (contentEl.style.maxHeight !== "none") {
-                        contentEl.style.maxHeight = "none";
-                    }
-                }
+                liftStaleExpandedHeight(contentEl);
             } catch (err) {
                 console.error("Toggle re-check failed", err);
             }

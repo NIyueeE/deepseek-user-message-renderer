@@ -158,11 +158,16 @@ describe("user message Markdown rendering", () => {
     test("injects CSS resources and calls the math/highlight hooks", () => {
         expect(env.gmResourceTextCalls.sort()).toEqual(["HLJS_CSS", "KATEX_CSS"]);
         // The third rule keeps the host app's own children of a collapsible
-        // container hidden while our sibling Markdown container is rendered
+        // container out of view while our sibling Markdown container is
+        // rendered — out of flow but still measurable (display:none would
+        // zero their size and make the host drop its toggle button)
         expect(env.gmAddStyleCalls).toEqual([
             "/* HLJS_CSS */",
             "/* KATEX_CSS */",
-            "[data-md-collapsible] > :not(.md-user-markdown) { display: none !important; }",
+            "[data-md-collapsible] { position: relative !important; }" +
+                "[data-md-collapsible] > :not(.md-user-markdown):not(.ds-collapsible-text-toggle-button) {" +
+                " position: absolute !important; top: 0 !important; left: 0 !important;" +
+                " width: 100% !important; visibility: hidden !important; }",
         ]);
         // KaTeX and highlight.js run on every rendered message
         expect(env.mathCalls.length).toBeGreaterThan(0);

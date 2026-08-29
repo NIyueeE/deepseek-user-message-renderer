@@ -32,13 +32,15 @@ editing, re-rendering, or the history-item highlight.
   and the native bubble layout stay intact. Long messages wrapped in DeepSeek's
   collapsible container (`ds-collapsible-text`) render into a sibling container
   instead, so the host app's own child nodes stay in the DOM (hidden by a
-  stylesheet rule) and its collapse/expand commits never break — the toggle
-  keeps working, and the expanded view is resized to fit the rendered Markdown.
+  stylesheet rule that keeps them measurable) and its collapse/expand commits
+  never break — the toggle keeps working, and the expanded view is resized to
+  fit the rendered Markdown.
 - **Native history highlight**: because the original bubble is never replaced,
   DeepSeek's history-item highlight works as-is without any mirroring.
-- **Never removes or hides DeepSeek's original nodes** — the text element is
-  rendered in place, so the references held by the host app (React) stay valid
-  and re-rendering never throws `NotFoundError`.
+- **Never removes DeepSeek's original nodes** — flat messages render in place,
+  and collapsible messages keep the host's own child nodes in the DOM (only
+  visually hidden, and still measurable), so the references held by the host
+  app (React) stay valid and its commits never throw `NotFoundError`.
 
 ## Install
 

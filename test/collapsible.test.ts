@@ -164,6 +164,23 @@ describe("collapsible user messages (long-message collapse)", () => {
         expect(collapsible.style.maxHeight).toBe("none");
     });
 
+    test("a rebuild while the message is expanded also lifts the stale height", async () => {
+        // Simulate the message being expanded (host raised max-height), then
+        // force a rebuild via a theme change
+        collapsible.style.maxHeight = "432px";
+        env.document.body.classList.add("dark");
+        await settle();
+
+        expect(collapsible.style.height).toBe("auto");
+        expect(collapsible.style.maxHeight).toBe("none");
+        expect(collapsible.dataset.mdTheme).toBe("dark");
+        env.document.body.classList.remove("dark");
+        await settle();
+        // The box stays lifted: we only ever lift, never re-clip — the host
+        // re-applies its own collapsed styles on the next collapse
+        expect(collapsible.style.maxHeight).toBe("none");
+    });
+
     test("does not lift the height when the message is collapsed", async () => {
         collapsible.style.maxHeight = "192px";
         collapsible.style.height = "432px";
