@@ -28,11 +28,12 @@ editing, re-rendering, or the history-item highlight.
 - **In-place rendering**: the original message text element (hashed class
   `fbb737a4`; `_8271fc3` only marks messages with an attachment) is transformed
   into DeepSeek's native `ds-markdown` structure (paragraphs carry
-  `ds-markdown-paragraph`), so no extra bubble is created and nothing is
-  hidden — attachment cards and the native bubble layout stay intact. Long
-  messages wrapped in DeepSeek's collapsible container (`ds-collapsible-text`)
-  are rendered inside that container, so the expand/collapse toggle keeps
-  working and React's references stay valid.
+  `ds-markdown-paragraph`), so no extra bubble is created — attachment cards
+  and the native bubble layout stay intact. Long messages wrapped in DeepSeek's
+  collapsible container (`ds-collapsible-text`) render into a sibling container
+  instead, so the host app's own child nodes stay in the DOM (hidden by a
+  stylesheet rule) and its collapse/expand commits never break — the toggle
+  keeps working, and the expanded view is resized to fit the rendered Markdown.
 - **Native history highlight**: because the original bubble is never replaced,
   DeepSeek's history-item highlight works as-is without any mirroring.
 - **Never removes or hides DeepSeek's original nodes** — the text element is
@@ -82,9 +83,9 @@ bun run lint:fix  # auto-fix formatting and lint issues
   message box on edit click, re-rendering after submit, skipping rendering in
   edit state.
 - [`test/collapsible.test.ts`](test/collapsible.test.ts): long messages wrapped
-  in DeepSeek's collapsible container render inside it while the container and
-  its expand/collapse toggle stay intact; edit restore and cancel re-render
-  keep working there too.
+  in DeepSeek's collapsible container render into a sibling container while the
+  host's own child nodes stay alive; toggle re-checks, edit restore, cancel
+  re-render, theme rebuild, and stale-height handling on expand.
 - [`test/marked-quirk.test.ts`](test/marked-quirk.test.ts): regression guard
   for marked 18 (a code fence directly after a paragraph whose content is
   `---` parses as a code block; marked <=12 misparsed it as a setext heading).

@@ -2,7 +2,7 @@
 // @name         DeepSeek User Message Markdown Renderer
 // @name:zh-CN   DeepSeek 用户消息 Markdown 渲染器
 // @namespace    http://tampermonkey.net/
-// @version      1.0.8
+// @version      1.0.9
 // @description  Render your own messages on DeepSeek web with native-style Markdown, LaTeX math, and official code blocks; safe editing and history highlight included.
 // @description:zh-CN  让 DeepSeek 网页版中你自己发送的消息以原生样式渲染 Markdown、LaTeX 公式和官方风格代码块;支持安全编辑与历史消息高亮。
 // @author       NIyueeE
@@ -40,6 +40,17 @@
         console.warn("Failed to inject stylesheets", e);
     }
 
+    // While the Markdown lives in a sibling container inside a collapsible
+    // container, the host app's own children stay in the DOM (React must keep
+    // finding them for its commits to succeed) but out of view. Hiding through
+    // a stylesheet rule survives the host re-creating or re-writing those
+    // children at any time — which its collapse/expand commits do.
+    try {
+        GM_addStyle("[data-md-collapsible] > :not(.md-user-markdown) { display: none !important; }");
+    } catch (e) {
+        console.warn("Failed to inject collapsible style", e);
+    }
+
     // The user message text element: the hashed class is confirmed stable in
     // DeepSeek's current build (same kind as _9663006; update if DeepSeek
     // changes it). Note: the companion class _8271fc3 only marks messages that
@@ -58,12 +69,30 @@
     // Newer DeepSeek builds wrap long user messages in a collapsible container:
     // fbb737a4 > div.ds-collapsible-text (clipped via an inline max-height, with
     // the measured height set inline too) plus a sibling
-    // div.ds-collapsible-text-toggle-button that expands/collapses it. Rendering
-    // must happen inside that container: replacing fbb737a4's children wholesale
-    // would destroy the wrapper and the toggle, break the collapse UI, and make
-    // the host app (React) throw when it reconciles its removed nodes. Short
-    // messages keep the flat structure and still render into fbb737a4 directly.
+    // div.ds-collapsible-text-toggle-button that expands/collapses it. The host
+    // app (React) inserts and removes its own children inside that container on
+    // every toggle (a fade mask etc.), so its recorded child nodes must survive
+    // at all times: the Markdown is rendered into a SIBLING container
+    // (md-user-markdown) and the host's original children stay in the DOM,
+    // hidden by the injected stylesheet rule. Replacing them instead would make
+    // the host's next commit throw (NotFoundError) and swallow the message.
+    // Short messages keep the flat structure and still render into fbb737a4
+    // directly, in place.
     const COLLAPSIBLE_TEXT_CLASS = "ds-collapsible-text";
+    // Class of our sibling Markdown container inside the collapsible container
+    const MD_MARKDOWN_CLASS = "md-user-markdown";
+    // dataset key (data-md-collapsible) marking a collapsible container whose
+    // host children are hidden by the injected stylesheet rule. A data
+    // attribute is used instead of a class because React rewrites className
+    // when its own class state changes, while unknown data attributes are
+    // never touched.
+    const MD_COLLAPSIBLE_ATTR = "mdCollapsible";
+    // After a collapse/expand toggle click, wait for the host's commit and
+    // height animation before re-checking the message (see handleToggleClick)
+    const TOGGLE_RECHECK_MS = 450;
+    // The host's collapsed max-height per container, captured at first render;
+    // used to tell collapsed from expanded when correcting stale box heights
+    const COLLAPSED_MAX_HEIGHTS = new WeakMap();
 
     // The element whose content this script manages: the collapsible container
     // when the message is wrapped in one, otherwise the text element itself.
@@ -763,12 +792,30 @@
             return;
         }
 
+        // While a collapse/expand toggle re-check is pending, the host app is
+        // committing its own children in and out of the container — do not race it
+        const toggledAt = Number(contentEl.dataset.mdToggledAt) || 0;
+        if (toggledAt && Date.now() - toggledAt < TOGGLE_RECHECK_MS) {
+            return;
+        }
+
+        // Theme switch: code blocks carry a dark/light variant class decided at
+        // upgrade time, so when the page theme changes the rendered message
+        // must be rebuilt. The observer picks up the body class change.
+        const themeKey = document.body.classList.contains("dark") ? "dark" : "light";
+
+        // Collapsible messages render into a sibling container so the host's
+        // own child nodes stay valid for its commits; short (flat) messages
+        // render in place, which has always been safe there
+        if (contentEl !== textEl) {
+            renderCollapsibleMessage(contentEl, themeKey);
+            return;
+        }
+
+        // -- Flat message: render in place --
         // Use textContent, not innerText: innerText depends on the page's
         // white-space CSS and collapses newlines to spaces when the container
         // is not pre-wrap, which would flatten code fences and code lines.
-        // Read from the render target: for collapsible messages the toggle
-        // button is a sibling inside the text element and must never leak
-        // into the parsed text.
         // Trim DOM whitespace around the message text: wrapper elements may
         // carry indentation-only text nodes, and leading spaces beyond three
         // would break fence detection (the message is its trimmed text)
@@ -785,12 +832,9 @@
             return;
         }
 
-        // Theme switch: code blocks carry a dark/light variant class decided at
-        // upgrade time, so when the page theme changes the rendered message
-        // must be rebuilt. The observer picks up the body class change.
-        // Re-render from the stored raw Markdown: the current textContent is
-        // the script's own render output and would re-parse as plain text.
-        const themeKey = document.body.classList.contains("dark") ? "dark" : "light";
+        // Re-render from the stored raw Markdown on a theme switch: the current
+        // textContent is the script's own render output and would re-parse as
+        // plain text.
         if (
             contentEl.dataset.mdRendered != null &&
             contentEl.dataset.mdTheme &&
@@ -811,23 +855,11 @@
             return;
         }
 
-        // 3. Parse Markdown and render it in place: the render target (the
-        //    collapsible container for long messages, otherwise the text
-        //    element) becomes the Markdown container. No original node is
-        //    hidden or removed and no extra bubble is created, so attachments,
-        //    the native bubble layout, and the collapse toggle are never touched.
-        let parsed = null;
-        if (md) {
-            try {
-                parsed = parseMarkdown(collapseBlankLinesOutsideFences(rawText));
-            } catch (err) {
-                console.error("Markdown parsing failed", err);
-            }
-            // marked always appends a trailing newline; the bubble's
-            // white-space: pre-wrap would render it as an extra empty line
-            // below the content, so strip trailing whitespace outside tags
-            parsed = parsed.replace(/\s+$/, "");
-        }
+        // Parse Markdown and render it in place: the text element becomes the
+        // Markdown container. No original node is hidden or removed and no
+        // extra bubble is created, so attachments and the native bubble layout
+        // are never touched.
+        const parsed = parseRawMarkdown(rawText);
         if (parsed == null) {
             // Fallback: keep the raw text visible, preserving line breaks
             contentEl.textContent = rawText.replace(/\s+$/, "");
@@ -838,19 +870,48 @@
             contentEl.style.whiteSpace = "";
         }
         contentEl.classList.add(...MARKDOWN_CONTAINER_CLASSES);
+        decorateMarkdown(contentEl);
 
-        // 4. Add the official style class to paragraph nodes and wrap text
-        //    segments in <span class=""> like DeepSeek's native renderer
-        //    (must run before KaTeX so math output is untouched)
-        contentEl.querySelectorAll("p").forEach((p) => {
+        // Mark only after a successful render: mdRendered stores the raw
+        // Markdown (restored on edit click), mdRenderedText stores the
+        // trimmed text of the render output, which is what the next scan
+        // reads, so the dedup check above stops the observer from
+        // re-rendering in a loop. Failed renders can retry next time.
+        contentEl.dataset.mdRendered = rawText;
+        contentEl.dataset.mdRenderedText = (contentEl.textContent ?? "").trim();
+        contentEl.dataset.mdTheme = themeKey;
+    }
+
+    // Parse raw Markdown into HTML for injection; null when marked is
+    // unavailable or parsing failed (callers fall back to plain text)
+    function parseRawMarkdown(rawText) {
+        if (!md) {
+            return null;
+        }
+        try {
+            // marked always appends a trailing newline; the bubble's
+            // white-space: pre-wrap would render it as an extra empty line
+            // below the content, so strip trailing whitespace outside tags
+            return parseMarkdown(collapseBlankLinesOutsideFences(rawText)).replace(/\s+$/, "");
+        } catch (err) {
+            console.error("Markdown parsing failed", err);
+            return null;
+        }
+    }
+
+    // Shared pipeline for a container that received parsed Markdown: native
+    // paragraph classes and text-segment wrapping (must run before KaTeX so
+    // math output is untouched), LaTeX math, syntax highlighting, and the
+    // native md-code-block rebuild.
+    function decorateMarkdown(container) {
+        container.querySelectorAll("p").forEach((p) => {
             p.classList.add("ds-markdown-paragraph");
             wrapTextSegments(p);
         });
 
-        // 5. Render LaTeX math
         if (typeof renderMathInElement === "function") {
             try {
-                renderMathInElement(contentEl, {
+                renderMathInElement(container, {
                     delimiters: [
                         { left: "$$", right: "$$", display: true },
                         { left: "$", right: "$", display: false },
@@ -864,10 +925,9 @@
             }
         }
 
-        // 6. Apply code syntax highlighting
         if (typeof hljs !== "undefined" && typeof hljs.highlightElement === "function") {
             try {
-                contentEl.querySelectorAll("pre code").forEach((block) => {
+                container.querySelectorAll("pre code").forEach((block) => {
                     // Skip languages hljs does not know (e.g. mermaid, text):
                     // highlightElement would log a console warning and fall back
                     // to no highlighting anyway
@@ -885,9 +945,7 @@
             }
         }
 
-        // 7. Rebuild code blocks into DeepSeek's native md-code-block structure
-        //    so the page's built-in CSS renders them like native code blocks
-        contentEl.querySelectorAll("pre code").forEach((codeEl) => {
+        container.querySelectorAll("pre code").forEach((codeEl) => {
             try {
                 if (codeEl.parentElement) {
                     upgradeCodeBlock(codeEl.parentElement);
@@ -896,14 +954,80 @@
                 console.error("Code block upgrade failed", err);
             }
         });
+    }
 
-        // 8. Mark only after a successful render: mdRendered stores the raw
-        //    Markdown (restored on edit click), mdRenderedText stores the
-        //    trimmed text of the render output, which is what the next scan
-        //    reads, so the dedup check above stops the observer from
-        //    re-rendering in a loop. Failed renders can retry next time.
+    function findMarkdownContainer(contentEl) {
+        for (const child of Array.from(contentEl.children)) {
+            if (child.classList.contains(MD_MARKDOWN_CLASS)) {
+                return child;
+            }
+        }
+        return null;
+    }
+
+    // -- Collapsible message --
+    // The host app commits its own children in and out of the container on
+    // every toggle, so they must stay in the DOM at all times. The Markdown
+    // therefore lives in a sibling container (hidden host children via the
+    // injected stylesheet rule) and the dedup fingerprint is our own
+    // container's text, which the host never touches.
+    function renderCollapsibleMessage(contentEl, themeKey) {
+        const markdownEl = findMarkdownContainer(contentEl);
+        if (markdownEl) {
+            const unchanged = contentEl.dataset.mdRenderedText === markdownEl.textContent.trim();
+            const themeChanged = contentEl.dataset.mdTheme !== themeKey;
+            if (unchanged && !themeChanged) {
+                return;
+            }
+            // Theme switch (or a mutated output container): rebuild from the
+            // stored raw Markdown — the host's children may have been swapped
+            // out by its toggle commits, so they are not a reliable source
+            buildCollapsibleMarkdown(contentEl, contentEl.dataset.mdRendered || "", themeKey);
+            return;
+        }
+
+        // Not rendered yet (fresh message, or a restore removed our container):
+        // the host's children hold the raw message
+        const rawText = (contentEl.textContent ?? "").trim();
+        if (!rawText) {
+            delete contentEl.dataset.mdRendered;
+            delete contentEl.dataset.mdRenderedText;
+            delete contentEl.dataset.mdTheme;
+            delete contentEl.dataset[MD_COLLAPSIBLE_ATTR];
+            return;
+        }
+        buildCollapsibleMarkdown(contentEl, rawText, themeKey);
+    }
+
+    function buildCollapsibleMarkdown(contentEl, rawText, themeKey) {
+        const markdownEl = contentEl.ownerDocument.createElement("div");
+        markdownEl.className = [MD_MARKDOWN_CLASS, ...MARKDOWN_CONTAINER_CLASSES].join(" ");
+        const parsed = parseRawMarkdown(rawText);
+        if (parsed == null) {
+            // Fallback: keep the raw text visible, preserving line breaks
+            markdownEl.textContent = rawText;
+            markdownEl.style.whiteSpace = "pre-wrap";
+        } else {
+            markdownEl.innerHTML = parsed;
+            removeWhitespaceOnlyTextNodes(markdownEl);
+        }
+        decorateMarkdown(markdownEl);
+
+        findMarkdownContainer(contentEl)?.remove();
+        contentEl.appendChild(markdownEl);
+        // Stylesheet-scoped hiding of the host's own children (see the
+        // injected rule at the top). A data attribute survives React rewriting
+        // className, unlike a class.
+        contentEl.dataset[MD_COLLAPSIBLE_ATTR] = "1";
+        // Remember the host's collapsed box height so toggle handling can tell
+        // collapsed from expanded later (see handleToggleClick)
+        const collapsedMax = contentEl.style.maxHeight;
+        if (collapsedMax && !COLLAPSED_MAX_HEIGHTS.has(contentEl)) {
+            COLLAPSED_MAX_HEIGHTS.set(contentEl, collapsedMax);
+        }
+
         contentEl.dataset.mdRendered = rawText;
-        contentEl.dataset.mdRenderedText = (contentEl.textContent ?? "").trim();
+        contentEl.dataset.mdRenderedText = markdownEl.textContent.trim();
         contentEl.dataset.mdTheme = themeKey;
     }
 
@@ -935,6 +1059,41 @@
         return null;
     }
 
+    function handleToggleClick(toggleBtn) {
+        const msg = findMessageForButton(toggleBtn);
+        const textEl = msg?.querySelector(USER_TEXT_SELECTOR);
+        if (!textEl?.isConnected) {
+            return;
+        }
+        const contentEl = resolveContentEl(textEl);
+        // Only messages rendered by this script need the re-check; native
+        // messages and flat messages have no collapsible container to fix up
+        if (contentEl === textEl || contentEl.dataset.mdRendered == null) {
+            return;
+        }
+        // Block the observer while the host commits its collapse/expand state
+        contentEl.dataset.mdToggledAt = String(Date.now());
+        setTimeout(() => {
+            delete contentEl.dataset.mdToggledAt;
+            try {
+                renderUserMessage(textEl);
+                // The host sizes the box to the height it measured on the
+                // native text. Our rendered Markdown is usually taller, so
+                // when the message is expanded, lift the stale measured height
+                // to the actual content — otherwise the expanded view clips.
+                const collapsedMax = COLLAPSED_MAX_HEIGHTS.get(contentEl);
+                if (collapsedMax && contentEl.style.maxHeight !== collapsedMax) {
+                    contentEl.style.height = "auto";
+                    if (contentEl.style.maxHeight !== "none") {
+                        contentEl.style.maxHeight = "none";
+                    }
+                }
+            } catch (err) {
+                console.error("Toggle re-check failed", err);
+            }
+        }, TOGGLE_RECHECK_MS);
+    }
+
     function restoreUserMessage(msgNode) {
         const textEl = msgNode.querySelector(USER_TEXT_SELECTOR);
         if (!textEl?.isConnected) {
@@ -946,16 +1105,29 @@
             return;
         }
 
-        // Put the raw Markdown back into the render target (inside the
-        // collapsible container when present, so the toggle stays intact) so
-        // the host app reads the original content, and drop the injected
-        // classes so the page styles it natively again. A cooldown window
-        // blocks the observer while the editor is set up.
-        contentEl.textContent = contentEl.dataset.mdRendered;
-        contentEl.classList.remove(...MARKDOWN_CONTAINER_CLASSES);
-        contentEl.style.whiteSpace = "";
-        delete contentEl.dataset.mdRenderedText;
-        contentEl.dataset.mdRestoredAt = String(Date.now());
+        if (contentEl !== textEl) {
+            // Collapsible message: our Markdown lives in a sibling container.
+            // Removing it unhides the host's own children (they were never
+            // touched, so the host app takes over a fully native DOM and its
+            // commits keep succeeding). Never write into the host's nodes.
+            findMarkdownContainer(contentEl)?.remove();
+            delete contentEl.dataset[MD_COLLAPSIBLE_ATTR];
+            delete contentEl.dataset.mdRendered;
+            delete contentEl.dataset.mdRenderedText;
+            delete contentEl.dataset.mdTheme;
+            delete contentEl.dataset.mdToggledAt;
+            contentEl.dataset.mdRestoredAt = String(Date.now());
+        } else {
+            // Flat message: put the raw Markdown back so the host app reads
+            // the original content, and drop the injected classes so the page
+            // styles it natively again. A cooldown window blocks the observer
+            // while the editor is set up.
+            contentEl.textContent = contentEl.dataset.mdRendered;
+            contentEl.classList.remove(...MARKDOWN_CONTAINER_CLASSES);
+            contentEl.style.whiteSpace = "";
+            delete contentEl.dataset.mdRenderedText;
+            contentEl.dataset.mdRestoredAt = String(Date.now());
+        }
 
         // After the cooldown, re-check the message once: if the edit was submitted
         // and the text changed, render the new content; if the editor is still
@@ -980,13 +1152,6 @@
             return;
         }
         const contentEl = resolveContentEl(textEl);
-        // Only messages restored by this script can be re-rendered on cancel
-        if (contentEl.dataset.mdRendered == null) {
-            return;
-        }
-        delete contentEl.dataset.mdRendered;
-        delete contentEl.dataset.mdRenderedText;
-        delete contentEl.dataset.mdRestoredAt;
         setTimeout(() => {
             try {
                 renderUserMessage(textEl);
@@ -994,6 +1159,24 @@
                 console.error("Re-render after cancel failed", err);
             }
         }, 50);
+        if (contentEl !== textEl) {
+            // Collapsible message: the restore already removed our container
+            // and markers; lifting the cooldown is enough — the host's own
+            // commit puts the text back and the re-render rebuilds from it
+            if (contentEl.dataset.mdRestoredAt == null) {
+                return;
+            }
+            delete contentEl.dataset.mdRestoredAt;
+            return;
+        }
+        // Only flat messages restored by this script can be re-rendered on
+        // cancel; the raw Markdown is put back first so it re-parses
+        if (contentEl.dataset.mdRendered == null) {
+            return;
+        }
+        delete contentEl.dataset.mdRendered;
+        delete contentEl.dataset.mdRenderedText;
+        delete contentEl.dataset.mdRestoredAt;
     }
 
     // Both window and document listen in the capture phase, so every event
@@ -1016,6 +1199,16 @@
         if (!target || typeof target.closest !== "function") {
             return;
         }
+
+        // Collapse/expand toggle of a collapsible long message: the host handles
+        // the toggle itself; we only re-check the message once it has finished
+        // (and lift its stale measured height when expanded — see below)
+        const toggleBtn = target.closest(".ds-collapsible-text-toggle-button");
+        if (toggleBtn) {
+            handleToggleClick(toggleBtn);
+            return;
+        }
+
         const btn = target.closest('[role="button"], button, .ds-button');
         if (!btn) {
             return;
