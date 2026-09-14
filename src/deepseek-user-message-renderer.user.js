@@ -2,7 +2,7 @@
 // @name         DeepSeek User Message Markdown Renderer
 // @name:zh-CN   DeepSeek 用户消息 Markdown 渲染器
 // @namespace    http://tampermonkey.net/
-// @version      1.1.2
+// @version      1.1.3
 // @description  Render your own messages on DeepSeek web with native-style Markdown, LaTeX math, and official code blocks; safe editing and history highlight included.
 // @description:zh-CN  让 DeepSeek 网页版中你自己发送的消息以原生样式渲染 Markdown、LaTeX 公式和官方风格代码块;支持安全编辑与历史消息高亮。
 // @author       NIyueeE
@@ -95,7 +95,22 @@
                 // ds-button__background element paints it, so the indicator
                 // follows the theme; a build without that element shows no tint.
                 `[${RAW_BUTTON_ATTR}][${RAW_ACTIVE_ATTR}="1"] .ds-button__background {` +
-                " background-color: currentColor !important; opacity: 0.16 !important; }",
+                " background-color: currentColor !important; opacity: 0.16 !important; }" +
+                // Native-looking tooltip: the browser's own title box looks
+                // nothing like DeepSeek's, so the hint is drawn from the page's
+                // tooltip tokens (background, inverted label, caption font) and
+                // revealed on hover with the usual short delay. `title` is
+                // deliberately NOT set, so no second, unstyled box appears.
+                `[${RAW_BUTTON_ATTR}]::after {` +
+                " content: attr(data-md-raw-tip); position: absolute; top: calc(100% + 6px); left: 50%;" +
+                " transform: translateX(-50%); padding: 6px 10px; border-radius: 8px;" +
+                " background-color: var(--dsw-alias-tooltip-bg, #2c2c2e);" +
+                " color: var(--dsw-alias-label-primary-inverted, #fff);" +
+                " font: var(--dsw-font-xxs-12, 12px/18px var(--dsw-font-family, sans-serif));" +
+                " white-space: nowrap; opacity: 0; pointer-events: none; z-index: 10;" +
+                " transition: opacity var(--ds-transition-duration-fast, 0.1s) ease; }" +
+                `[${RAW_BUTTON_ATTR}]:hover::after, [${RAW_BUTTON_ATTR}]:focus-visible::after {` +
+                " opacity: 1; transition-delay: 0.4s; }",
         );
     } catch (e) {
         console.warn("Failed to inject raw-mode style", e);
@@ -1374,6 +1389,7 @@
             const clone = anchor.cloneNode(true);
             clone.removeAttribute("id");
             clone.removeAttribute("title");
+            clone.removeAttribute("data-md-raw-tip");
             clone.removeAttribute("aria-label");
             clone.removeAttribute("aria-pressed");
             clone.removeAttribute("aria-disabled");
@@ -1384,8 +1400,8 @@
             }
             // Put our glyph where the native icon was, keeping the host's
             // wrapper element(s) so their sizing and colour rules keep applying
-            const icon = buildRawToggleIcon(doc);
             const nativeSvg = clone.querySelector("svg");
+            const icon = buildRawToggleIcon(doc, nativeSvg);
             if (nativeSvg) {
                 nativeSvg.replaceWith(icon);
             } else {
@@ -1396,7 +1412,9 @@
             clone.setAttribute("role", "button");
             clone.setAttribute("tabindex", "0");
             clone.setAttribute("aria-disabled", "false");
-            clone.setAttribute("title", RAW_TOGGLE_TITLES[1]);
+            // The hint is drawn by our own token-styled tooltip (see the
+            // stylesheet); no `title`, so the browser's box never shows up
+            clone.setAttribute("data-md-raw-tip", RAW_TOGGLE_TITLES[1]);
             return clone;
         }
         // Fallback for a build without a clonable neighbour button: rebuild the
@@ -1408,7 +1426,7 @@
         button.setAttribute("role", "button");
         button.setAttribute("tabindex", "0");
         button.setAttribute("aria-disabled", "false");
-        button.setAttribute("title", RAW_TOGGLE_TITLES[1]);
+        button.setAttribute("data-md-raw-tip", RAW_TOGGLE_TITLES[1]);
         const background = doc.createElement("div");
         background.className = "ds-button__background";
         button.appendChild(background);
@@ -1419,21 +1437,72 @@
         return button;
     }
 
-    // Native-style icon: a small "</>" glyph, matching the neighbouring action
-    // buttons' stroke-based icon look
-    function buildRawToggleIcon(doc) {
+    // Our "</>" glyph, drawn with the native icon's own geometry
+    function buildRawToggleIcon(doc, template) {
+        // Derive every geometric attribute from the native icon being replaced,
+        // so our glyph is exactly the same box, scale, stroke and colour as the
+        // host's own icons. Hardcoding a size was why the button looked smaller
+        // and off-centre compared with its neighbours. The fallback values only
+        // apply when there is no native icon to copy.
+        const size = template?.getAttribute("width") || template?.getAttribute("height") || "16";
+        const viewBox = template?.getAttribute("viewBox") || "0 0 16 16";
+        const stroke = template?.getAttribute("stroke") || "currentColor";
         const svg = doc.createElementNS(SVG_NS, "svg");
-        svg.setAttribute("width", "16");
-        svg.setAttribute("height", "16");
-        svg.setAttribute("viewBox", "0 0 16 16");
-        svg.setAttribute("fill", "none");
-        for (const d of ["M5.8 4.5L2.3 8l3.5 3.5", "M10.2 4.5L13.7 8l-3.5 3.5"]) {
+        svg.setAttribute("width", size);
+        svg.setAttribute("height", size);
+        svg.setAttribute("viewBox", viewBox);
+        svg.setAttribute("fill", template?.getAttribute("fill") || "none");
+        svg.setAttribute("xmlns", SVG_NS);
+        if (template?.getAttribute("class")) {
+            svg.setAttribute("class", template.getAttribute("class"));
+        }
+        // Copy the native paths' presentation attributes (stroke width, line
+        // caps/joins, ...) onto our own paths, so the glyph is drawn with the
+        // page's own icon language instead of guessed values.
+        const inherited = {};
+        const collect = (el, skip) => {
+            if (!el) {
+                return;
+            }
+            for (const attr of Array.from(el.attributes)) {
+                if (!skip.includes(attr.name) && !(attr.name in inherited)) {
+                    inherited[attr.name] = attr.value;
+                }
+            }
+        };
+        // The native icon may carry its presentation attributes on the <svg>
+        // itself (stroke, stroke-width, ...) or on the path; take both, with the
+        // path winning, so the glyph is drawn exactly like the host's icons
+        collect(template, ["class", "xmlns", "viewBox", "width", "height", "fill"]);
+        collect(template?.querySelector("path"), ["d", "class"]);
+        // A "</>" glyph expressed on the native 16x16 grid, scaled to whatever
+        // viewBox the host's icon uses
+        const scale = viewBox.includes("0 0 16 16") || viewBox === "" ? 1 : null;
+        const glyphs =
+            scale === 1
+                ? ["M5.4 4.6L2.6 8l2.8 3.4", "M10.6 4.6L13.4 8l-2.8 3.4"]
+                : ["M2.6 4.5L0.9 8l1.7 3.5", "M5.4 4.5L7.1 8l-1.7 3.5"];
+        for (const d of glyphs) {
             const pathEl = doc.createElementNS(SVG_NS, "path");
             pathEl.setAttribute("d", d);
-            pathEl.setAttribute("stroke", "currentColor");
-            pathEl.setAttribute("stroke-width", "1.3");
-            pathEl.setAttribute("stroke-linecap", "round");
-            pathEl.setAttribute("stroke-linejoin", "round");
+            for (const [name, value] of Object.entries(inherited)) {
+                pathEl.setAttribute(name, value);
+            }
+            if (!("stroke" in inherited)) {
+                pathEl.setAttribute("stroke", stroke);
+            }
+            if (!("fill" in inherited)) {
+                pathEl.setAttribute("fill", "none");
+            }
+            if (!("stroke-width" in inherited)) {
+                pathEl.setAttribute("stroke-width", "1.5");
+            }
+            if (!("stroke-linecap" in inherited)) {
+                pathEl.setAttribute("stroke-linecap", "round");
+            }
+            if (!("stroke-linejoin" in inherited)) {
+                pathEl.setAttribute("stroke-linejoin", "round");
+            }
             svg.appendChild(pathEl);
         }
         return svg;
@@ -1498,7 +1567,8 @@
         }
         button.setAttribute(RAW_ACTIVE_ATTR, state.raw ? "1" : "0");
         button.setAttribute("aria-pressed", state.raw ? "true" : "false");
-        button.setAttribute("title", state.raw ? RAW_TOGGLE_TITLES[0] : RAW_TOGGLE_TITLES[1]);
+        // Describes the action a click performs; drawn by our own tooltip
+        button.setAttribute("data-md-raw-tip", state.raw ? RAW_TOGGLE_TITLES[0] : RAW_TOGGLE_TITLES[1]);
     }
 
     function findRawSourceEl(message) {

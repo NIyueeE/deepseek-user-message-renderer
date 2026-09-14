@@ -182,7 +182,18 @@ describe("user message Markdown rendering", () => {
                 " background-color: transparent;" +
                 " white-space: pre-wrap; word-break: break-word; overflow-wrap: anywhere; }" +
                 '[data-md-raw-toggle][data-md-raw-active="1"] .ds-button__background {' +
-                " background-color: currentColor !important; opacity: 0.16 !important; }",
+                " background-color: currentColor !important; opacity: 0.16 !important; }" +
+                // The hint is drawn from the page's tooltip tokens instead of the
+                // browser's title box
+                "[data-md-raw-toggle]::after { content: attr(data-md-raw-tip); position: absolute;" +
+                " top: calc(100% + 6px); left: 50%; transform: translateX(-50%); padding: 6px 10px;" +
+                " border-radius: 8px; background-color: var(--dsw-alias-tooltip-bg, #2c2c2e);" +
+                " color: var(--dsw-alias-label-primary-inverted, #fff);" +
+                " font: var(--dsw-font-xxs-12, 12px/18px var(--dsw-font-family, sans-serif));" +
+                " white-space: nowrap; opacity: 0; pointer-events: none; z-index: 10;" +
+                " transition: opacity var(--ds-transition-duration-fast, 0.1s) ease; }" +
+                "[data-md-raw-toggle]:hover::after, [data-md-raw-toggle]:focus-visible::after {" +
+                " opacity: 1; transition-delay: 0.4s; }",
         ]);
         // KaTeX and highlight.js run on every rendered message
         expect(env.mathCalls.length).toBeGreaterThan(0);

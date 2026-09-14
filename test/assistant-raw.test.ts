@@ -85,7 +85,10 @@ describe("assistant raw/rendered toggle", () => {
         // ...but the copy button's identity must not be duplicated onto ours
         expect(button?.id).toBe("");
         expect(assistant.copyButton.id).toBe("native-copy-button");
-        expect(button?.getAttribute("title")).toBe("查看原始 Markdown");
+        // The hint rides on our own attribute (drawn by the token-styled tooltip),
+        // never on `title`, so the browser's unstyled box cannot appear
+        expect(button?.getAttribute("data-md-raw-tip")).toBe("查看原始 Markdown");
+        expect(button?.hasAttribute("title")).toBeFalse();
         // Same element shape as the native button it was cloned from
         expect(Array.from(button?.children ?? []).map((c) => c.className)).toEqual(
             Array.from(assistant.copyButton.children).map((c) => c.className),
