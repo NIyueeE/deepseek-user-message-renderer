@@ -286,7 +286,13 @@ export function appendAssistantMessage(
     copyButton.setAttribute("tabindex", "0");
     copyButton.className =
         "ds-button ds-button--iconLabelTertiary ds-button--icon ds-button--capsule ds-button--xs db183363";
-    copyButton.innerHTML = '<div class="ds-button__icon ds-button__icon--last-child"></div>';
+    // Real buttons carry a ds-button__background element that paints the native
+    // hover/active/focus states, wrapped around the icon
+    copyButton.innerHTML =
+        '<div class="ds-button__background"></div><div class="ds-button__icon ds-button__icon--last-child"></div>';
+    // Identity that a clone must NOT copy over to the toggle
+    copyButton.id = "native-copy-button";
+    copyButton.setAttribute("title", "复制");
     innerRow.appendChild(copyButton);
     actionRow.appendChild(innerRow);
     group.appendChild(actionRow);

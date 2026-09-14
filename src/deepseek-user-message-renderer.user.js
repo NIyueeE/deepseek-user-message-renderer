@@ -2,7 +2,7 @@
 // @name         DeepSeek User Message Markdown Renderer
 // @name:zh-CN   DeepSeek 用户消息 Markdown 渲染器
 // @namespace    http://tampermonkey.net/
-// @version      1.1.1
+// @version      1.1.2
 // @description  Render your own messages on DeepSeek web with native-style Markdown, LaTeX math, and official code blocks; safe editing and history highlight included.
 // @description:zh-CN  让 DeepSeek 网页版中你自己发送的消息以原生样式渲染 Markdown、LaTeX 公式和官方风格代码块;支持安全编辑与历史消息高亮。
 // @author       NIyueeE
@@ -69,13 +69,33 @@
     // host nodes, nothing measures this column.
     const RAW_MODE_ATTR = "data-md-raw-mode";
     const RAW_SOURCE_CLASS = "md-raw-source";
+    // The toggle button and its active-state marker (see section 10); declared
+    // here because the stylesheet below needs them
+    const RAW_BUTTON_ATTR = "data-md-raw-toggle";
+    const RAW_ACTIVE_ATTR = "data-md-raw-active";
     try {
         GM_addStyle(
             `[${RAW_MODE_ATTR}] { display: none !important; }` +
-                `.${RAW_SOURCE_CLASS} { margin: 0; padding: 0; background: transparent; border: 0;` +
-                " font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;" +
-                " font-size: 0.9em; line-height: 1.6; white-space: pre-wrap; word-break: break-word;" +
-                " overflow-wrap: anywhere; }",
+                // The raw source is styled from DeepSeek's OWN design tokens and
+                // reuses the native markdown container class (added in
+                // showRawSource), so it inherits the page's typography and
+                // follows the light/dark theme without hardcoding any colour.
+                // The fallbacks only apply if a future build drops a token.
+                `.${RAW_SOURCE_CLASS} {` +
+                " margin: 0; padding: 0; border: 0;" +
+                " font-family: var(--ds-font-family-code, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);" +
+                " font-size: var(--dsw-font-markdown-code-font-size, 14px);" +
+                " line-height: var(--dsw-font-markdown-code-line-height, 22px);" +
+                " font-weight: var(--dsw-font-markdown-code-font-weight, 400);" +
+                " color: var(--dsw-alias-label-primary, inherit);" +
+                " background-color: transparent;" +
+                " white-space: pre-wrap; word-break: break-word; overflow-wrap: anywhere; }" +
+                // While the raw source is shown, tint the toggle the way an
+                // active native button is tinted. The host's own
+                // ds-button__background element paints it, so the indicator
+                // follows the theme; a build without that element shows no tint.
+                `[${RAW_BUTTON_ATTR}][${RAW_ACTIVE_ATTR}="1"] .ds-button__background {` +
+                " background-color: currentColor !important; opacity: 0.16 !important; }",
         );
     } catch (e) {
         console.warn("Failed to inject raw-mode style", e);
@@ -1181,7 +1201,6 @@
     //     reasoning instead of the reply. Prop names survive minification, and
     //     the memoized props object is stable across renders — unlike the DOM,
     //     which keeps only what rendered — so the value is safe to cache.
-    const RAW_BUTTON_ATTR = "data-md-raw-toggle";
     // Button labels: [0] while the raw source is shown (action: back to
     // rendered), [1] while the message is rendered (action: show raw source)
     const RAW_TOGGLE_TITLES = ["切换到渲染视图", "查看原始 Markdown"];
@@ -1343,6 +1362,63 @@
         return null;
     }
 
+    // Build the toggle by CLONING the neighbouring native action button. This is
+    // what makes it behave natively: the host's own DOM shape — the icon
+    // wrapper, the ds-button__background element that paints hover/active/focus,
+    // and every state class — is reused verbatim, so whatever CSS the host
+    // applies to its own buttons applies to ours, and it keeps working when the
+    // build changes. Only the source button's identity is stripped (ids must not
+    // be duplicated, and its tooltip/pressed state would be wrong here).
+    function buildRawToggleButton(doc, anchor) {
+        if (anchor && typeof anchor.cloneNode === "function") {
+            const clone = anchor.cloneNode(true);
+            clone.removeAttribute("id");
+            clone.removeAttribute("title");
+            clone.removeAttribute("aria-label");
+            clone.removeAttribute("aria-pressed");
+            clone.removeAttribute("aria-disabled");
+            clone.removeAttribute(RAW_BUTTON_ATTR);
+            clone.removeAttribute(RAW_ACTIVE_ATTR);
+            for (const el of clone.querySelectorAll("[id]")) {
+                el.removeAttribute("id");
+            }
+            // Put our glyph where the native icon was, keeping the host's
+            // wrapper element(s) so their sizing and colour rules keep applying
+            const icon = buildRawToggleIcon(doc);
+            const nativeSvg = clone.querySelector("svg");
+            if (nativeSvg) {
+                nativeSvg.replaceWith(icon);
+            } else {
+                (clone.querySelector(".ds-button__icon") || clone).appendChild(icon);
+            }
+            clone.classList.add("md-raw-toggle");
+            clone.setAttribute(RAW_BUTTON_ATTR, "1");
+            clone.setAttribute("role", "button");
+            clone.setAttribute("tabindex", "0");
+            clone.setAttribute("aria-disabled", "false");
+            clone.setAttribute("title", RAW_TOGGLE_TITLES[1]);
+            return clone;
+        }
+        // Fallback for a build without a clonable neighbour button: rebuild the
+        // same structure by hand, background element included so hover works
+        const button = doc.createElement("div");
+        button.className =
+            "md-raw-toggle ds-button ds-button--iconLabelTertiary ds-button--icon ds-button--capsule ds-button--xs";
+        button.setAttribute(RAW_BUTTON_ATTR, "1");
+        button.setAttribute("role", "button");
+        button.setAttribute("tabindex", "0");
+        button.setAttribute("aria-disabled", "false");
+        button.setAttribute("title", RAW_TOGGLE_TITLES[1]);
+        const background = doc.createElement("div");
+        background.className = "ds-button__background";
+        button.appendChild(background);
+        const icon = doc.createElement("div");
+        icon.className = "ds-button__icon ds-button__icon--last-child";
+        icon.appendChild(buildRawToggleIcon(doc));
+        button.appendChild(icon);
+        return button;
+    }
+
     // Native-style icon: a small "</>" glyph, matching the neighbouring action
     // buttons' stroke-based icon look
     function buildRawToggleIcon(doc) {
@@ -1392,23 +1468,13 @@
             return state;
         }
         const doc = message.ownerDocument;
-        const button = doc.createElement("div");
-        button.setAttribute("role", "button");
-        button.setAttribute("tabindex", "0");
-        button.setAttribute("aria-disabled", "false");
-        const copyBtn = actionRow.querySelector('[role="button"]');
         // Anchor after the copy button when there is one; a row that is itself a
         // single button anchors on itself so the toggle is never nested inside it
+        const copyBtn = actionRow.querySelector('[role="button"]');
         const anchor = copyBtn ?? (actionRow.matches?.('[role="button"]') ? actionRow : null);
-        const nativeClasses = anchor
-            ? Array.from(anchor.classList).filter((cls) => !cls.startsWith("md-"))
-            : ["ds-button", "ds-button--iconLabelTertiary", "ds-button--icon", "ds-button--capsule", "ds-button--xs"];
-        button.className = ["md-raw-toggle", ...nativeClasses].join(" ");
-        button.setAttribute(RAW_BUTTON_ATTR, "1");
-        const icon = doc.createElement("div");
-        icon.className = "ds-button__icon ds-button__icon--last-child";
-        icon.appendChild(buildRawToggleIcon(doc));
-        button.appendChild(icon);
+        // Cloned from the host's own button, so every native class and the whole
+        // hover/active/focus structure come along
+        const button = buildRawToggleButton(doc, anchor);
         // Inserted directly after the copy button, inside the same row, so the
         // toggle sits next to it exactly like the other action buttons
         if (anchor) {
@@ -1430,7 +1496,7 @@
         if (!button) {
             return;
         }
-        button.setAttribute("data-md-raw-active", state.raw ? "1" : "0");
+        button.setAttribute(RAW_ACTIVE_ATTR, state.raw ? "1" : "0");
         button.setAttribute("aria-pressed", state.raw ? "true" : "false");
         button.setAttribute("title", state.raw ? RAW_TOGGLE_TITLES[0] : RAW_TOGGLE_TITLES[1]);
     }
@@ -1464,7 +1530,9 @@
             el.removeAttribute(RAW_MODE_ATTR);
         }
         const pre = message.ownerDocument.createElement("pre");
-        pre.className = RAW_SOURCE_CLASS;
+        // The native markdown container class is reused so the page's own
+        // markdown rules (typography, colour) apply to the raw source too
+        pre.className = `${RAW_SOURCE_CLASS} ds-markdown`;
         pre.textContent = state.rawSource;
         // Only the Markdown column is hidden, and the raw source is placed next
         // to it — the host's recorded nodes are never touched, moved, or

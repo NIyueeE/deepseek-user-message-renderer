@@ -72,13 +72,24 @@ describe("assistant raw/rendered toggle", () => {
         expect(button?.getAttribute("aria-pressed")).toBe("false");
     });
 
-    test("styles the toggle like the neighbouring copy button", () => {
+    test("mirrors the neighbouring copy button so native CSS (hover) applies", () => {
         const button = rawToggle(assistant.message);
         for (const cls of ["ds-button", "ds-button--iconLabelTertiary", "ds-button--icon", "ds-button--xs"]) {
             expect(button?.classList.contains(cls), cls).toBeTrue();
         }
-        // The copy button's structure is mirrored
+        // The whole native structure is cloned, including the background element
+        // that paints hover/active/focus
+        expect(button?.querySelector(".ds-button__background")).not.toBeNull();
         expect(button?.querySelector(".ds-button__icon")).not.toBeNull();
+        expect(button?.querySelector("svg")).not.toBeNull();
+        // ...but the copy button's identity must not be duplicated onto ours
+        expect(button?.id).toBe("");
+        expect(assistant.copyButton.id).toBe("native-copy-button");
+        expect(button?.getAttribute("title")).toBe("查看原始 Markdown");
+        // Same element shape as the native button it was cloned from
+        expect(Array.from(button?.children ?? []).map((c) => c.className)).toEqual(
+            Array.from(assistant.copyButton.children).map((c) => c.className),
+        );
     });
 
     test("shows the raw Markdown source on click and hides the rendered column", () => {
@@ -91,9 +102,15 @@ describe("assistant raw/rendered toggle", () => {
         const column = markdownColumn(assistant.message);
         expect(column.getAttribute("data-md-raw-mode")).toBe("1");
         // The raw source is rendered verbatim, as text (never as HTML)
-        expect(rawSource(assistant.message)?.textContent).toBe(raw);
-        expect(rawSource(assistant.message)?.tagName).toBe("PRE");
+        const pre = rawSource(assistant.message);
+        expect(pre?.textContent).toBe(raw);
+        expect(pre?.tagName).toBe("PRE");
+        // It carries the native markdown container class so the page's own
+        // typography and theme colours apply to it
+        expect(pre?.classList.contains("ds-markdown")).toBeTrue();
         expect(button.getAttribute("aria-pressed")).toBe("true");
+        // The active state is exposed for the native-background tint
+        expect(button.getAttribute("data-md-raw-active")).toBe("1");
     });
 
     test("returns to the rendered view on the second click", () => {

@@ -168,13 +168,21 @@ describe("user message Markdown rendering", () => {
                 "[data-md-collapsible] > :not(.md-user-markdown):not(.ds-collapsible-text-toggle-button) {" +
                 " position: absolute !important; top: 0 !important; left: 0 !important;" +
                 " width: 100% !important; visibility: hidden !important; }",
-            // Assistant raw mode hides only the Markdown column and styles the
-            // injected raw-source <pre>
+            // Assistant raw mode hides only the Markdown column; the raw <pre>
+            // is styled from DeepSeek's own design tokens (with fallbacks) so it
+            // follows the theme, and the toggle's active state reuses the native
+            // ds-button__background element
             "[data-md-raw-mode] { display: none !important; }" +
-                ".md-raw-source { margin: 0; padding: 0; background: transparent; border: 0;" +
-                " font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;" +
-                " font-size: 0.9em; line-height: 1.6; white-space: pre-wrap; word-break: break-word;" +
-                " overflow-wrap: anywhere; }",
+                ".md-raw-source { margin: 0; padding: 0; border: 0;" +
+                " font-family: var(--ds-font-family-code, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);" +
+                " font-size: var(--dsw-font-markdown-code-font-size, 14px);" +
+                " line-height: var(--dsw-font-markdown-code-line-height, 22px);" +
+                " font-weight: var(--dsw-font-markdown-code-font-weight, 400);" +
+                " color: var(--dsw-alias-label-primary, inherit);" +
+                " background-color: transparent;" +
+                " white-space: pre-wrap; word-break: break-word; overflow-wrap: anywhere; }" +
+                '[data-md-raw-toggle][data-md-raw-active="1"] .ds-button__background {' +
+                " background-color: currentColor !important; opacity: 0.16 !important; }",
         ]);
         // KaTeX and highlight.js run on every rendered message
         expect(env.mathCalls.length).toBeGreaterThan(0);

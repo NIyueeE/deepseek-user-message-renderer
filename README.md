@@ -24,7 +24,11 @@ editing, re-rendering, or the history-item highlight.
   (default) and the exact raw Markdown source the assistant produced, read from
   the React tree (the reply's `markdown` prop — never the reasoning chain's
   `content`). It is a pure view switch: the message's own DOM is never mutated,
-  toggling is lossless, and the button stays consistent across re-renders.
+  toggling is lossless, and the button stays consistent across re-renders. The
+  button is a clone of the neighbouring native action button, so it inherits the
+  host's own hover/active/focus styling, and the raw source is rendered with
+  DeepSeek's own design tokens and markdown container class — so it matches the
+  native typography and follows the light/dark theme instead of looking bolted on.
 - **LaTeX math** via KaTeX: `$...$`, `$$...$$`, `\(...\)`, `\[...\]`.
 - **Code blocks rebuilt into DeepSeek's official `md-code-block` structure**:
   banner with the language label, native light/dark theme, corner decorations,
