@@ -22,9 +22,9 @@ editing, re-rendering, or the history-item highlight.
 - **Assistant raw/rendered toggle**: every assistant reply gets a native-style
   button next to its copy button that switches between the rendered Markdown
   (default) and the exact raw Markdown source the assistant produced, read from
-  the React tree. It is a pure view switch: the message's own DOM is never
-  mutated, toggling is lossless, and the button stays consistent across
-  re-renders.
+  the React tree (the reply's `markdown` prop — never the reasoning chain's
+  `content`). It is a pure view switch: the message's own DOM is never mutated,
+  toggling is lossless, and the button stays consistent across re-renders.
 - **LaTeX math** via KaTeX: `$...$`, `$$...$$`, `\(...\)`, `\[...\]`.
 - **Code blocks rebuilt into DeepSeek's official `md-code-block` structure**:
   banner with the language label, native light/dark theme, corner decorations,

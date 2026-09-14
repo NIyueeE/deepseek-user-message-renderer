@@ -260,10 +260,10 @@ export function appendAssistantMessage(
     options?: { rendered?: string; withFiber?: boolean },
 ): AssistantFixture {
     const group = document.createElement("div");
-    // Deliberately NOT the user-message group class (_9663006): assistant
-    // messages live in their own list item, and the toggle must stay excluded
-    // from user messages
-    group.className = "ds-message-item";
+    // Mirror the real assistant list item (_4f9bf79._43c05b5): the reply and its
+    // action row are SIBLINGS, not nested. Deliberately NOT the user-message
+    // group class (_9663006), which the toggle must stay excluded from.
+    group.className = "_4f9bf79 _43c05b5";
 
     const message = document.createElement("div");
     message.className = "ds-message";
@@ -272,9 +272,10 @@ export function appendAssistantMessage(
     markdown.className = "ds-assistant-message-main-content ds-markdown";
     markdown.innerHTML = options?.rendered ?? `<p>${raw.replace(/\*\*/g, "")}</p>`;
     message.appendChild(markdown);
+    group.appendChild(message);
 
-    // Mirror the copy button's real structure: the action row is a ds-flex row
-    // with the hashed classes of the current build
+    // The action row is a SIBLING of the reply message in the current build:
+    // list item > [div.ds-message, div.ds-flex._0a3d93b]
     const actionRow = document.createElement("div");
     actionRow.className = "ds-flex _0a3d93b";
     actionRow.setAttribute("style", "align-items: center; gap: 10px; flex-wrap: wrap-reverse;");
@@ -288,13 +289,14 @@ export function appendAssistantMessage(
     copyButton.innerHTML = '<div class="ds-button__icon ds-button__icon--last-child"></div>';
     innerRow.appendChild(copyButton);
     actionRow.appendChild(innerRow);
-    message.appendChild(actionRow);
-    group.appendChild(message);
+    group.appendChild(actionRow);
     document.body.appendChild(group);
 
     if (options?.withFiber !== false) {
         // React assigns the fiber as a plain (enumerable) property on the node
-        const fiber = { memoizedProps: { content: raw }, return: null };
+        // The reply's source prop is `markdown` (the thinking chain uses
+        // `content`), matching the live build
+        const fiber = { memoizedProps: { markdown: raw }, return: null };
         Object.defineProperty(markdown, "__reactFiber$test", {
             value: fiber,
             enumerable: true,
@@ -303,6 +305,39 @@ export function appendAssistantMessage(
     }
 
     return { group, message, markdown, actionRow, copyButton, raw };
+}
+
+/**
+ * Append an assistant message that carries a reasoning chain in front of the
+ * reply. The thinking block also renders a `div.ds-markdown` (verified against
+ * the live DOM), and its React prop is `content` — the toggle must pick the
+ * reply column and the `markdown` prop, never the reasoning.
+ */
+export function appendAssistantMessageWithThinking(
+    document: Document,
+    thinking: string,
+    answer: string,
+    options?: { rendered?: string },
+): AssistantFixture {
+    const fixture = appendAssistantMessage(document, answer, options);
+    const { markdown } = fixture;
+
+    const thinkingWrap = document.createElement("div");
+    thinkingWrap.className = "ds-think-content";
+    const thinkingMd = document.createElement("div");
+    thinkingMd.className = "ds-markdown";
+    thinkingMd.innerHTML = "<p>已经思考过了</p>";
+    thinkingWrap.appendChild(thinkingMd);
+    markdown.parentElement?.insertBefore(thinkingWrap, markdown);
+
+    // The thinking block's own fiber exposes `content` (the chain), which must
+    // never be chosen for the reply
+    Object.defineProperty(thinkingMd, "__reactFiber$think", {
+        value: { memoizedProps: { content: thinking }, return: null },
+        enumerable: true,
+        configurable: true,
+    });
+    return fixture;
 }
 
 let loadUserscriptCalls = 0;

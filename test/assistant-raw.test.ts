@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
     appendAssistantMessage,
+    appendAssistantMessageWithThinking,
     appendMessageWithActions,
     appendUserMessage,
     loadUserscript,
@@ -27,6 +28,11 @@ const sourceless = appendAssistantMessage(env.document, "cannot read me", {
 });
 // A normal user message must stay untouched by the assistant logic
 const userMessage = appendUserMessage(env.document, "**user text**");
+// A reply that also renders a reasoning chain: the toggle must use the reply
+// column and the `markdown` prop, never the thinking chain
+const withThinking = appendAssistantMessageWithThinking(env.document, "推理过程秘密", "最终答案内容", {
+    rendered: "<p>最终答案内容</p>",
+});
 
 await loadUserscript();
 
@@ -34,12 +40,19 @@ function clickOn(el: HTMLElement): void {
     el.dispatchEvent(new env.window.Event("click", { bubbles: true }));
 }
 
+// The action row is a SIBLING of the reply message in the current build, so the
+// injected toggle and the raw <pre> live in the shared list item (parent), not
+// inside the reply .ds-message itself
+function item(message: HTMLElement): HTMLElement {
+    return message.parentElement as HTMLElement;
+}
+
 function rawToggle(message: HTMLElement): HTMLElement | null {
-    return message.querySelector("[data-md-raw-toggle]");
+    return item(message).querySelector("[data-md-raw-toggle]");
 }
 
 function rawSource(message: HTMLElement): HTMLElement | null {
-    return message.querySelector(".md-raw-source");
+    return item(message).querySelector(".md-raw-source");
 }
 
 function markdownColumn(message: HTMLElement): HTMLElement {
@@ -115,7 +128,7 @@ describe("assistant raw/rendered toggle", () => {
         await settle();
 
         // Exactly one button and one raw-source block, even after re-scans
-        expect(assistant.message.querySelectorAll("[data-md-raw-toggle]").length).toBe(1);
+        expect(assistant.group.querySelectorAll("[data-md-raw-toggle]").length).toBe(1);
         expect(assistant.message.querySelectorAll(".md-raw-source").length).toBe(1);
         expect(rawSource(assistant.message)?.previousElementSibling).toBe(markdownColumn(assistant.message));
         expect(button.isConnected).toBeTrue();
@@ -127,7 +140,7 @@ describe("assistant raw/rendered toggle", () => {
         button.remove();
         await settle();
 
-        expect(assistant.message.querySelectorAll("[data-md-raw-toggle]").length).toBe(1);
+        expect(assistant.group.querySelectorAll("[data-md-raw-toggle]").length).toBe(1);
         expect(assistant.copyButton.isConnected).toBeTrue();
     });
 
@@ -165,7 +178,7 @@ describe("assistant raw/rendered toggle", () => {
     });
 
     test("leaves user messages untouched", () => {
-        expect(userMessage.querySelector("[data-md-raw-toggle]")).toBeNull();
+        expect(userMessage.parentElement?.querySelector("[data-md-raw-toggle]")).toBeNull();
         expect(userMessage.querySelector(".ds-markdown")).not.toBeNull();
     });
 
@@ -185,6 +198,23 @@ describe("assistant raw/rendered toggle", () => {
 
         expect(textEl.classList.contains("ds-markdown")).toBeTrue();
         expect(message.querySelector("[data-md-raw-toggle]")).toBeNull();
+    });
+
+    test("uses the reply source, not the reasoning chain, when both are rendered", () => {
+        // The thinking block renders its own div.ds-markdown and exposes
+        // `content`; the reply exposes `markdown`. Picking the wrong one would
+        // show the private reasoning as the "raw" source.
+        const thinkingEl = withThinking.message.querySelector(".ds-think-content .ds-markdown");
+        expect(thinkingEl?.textContent).toBe("已经思考过了");
+
+        clickOn(rawToggle(withThinking.message) as HTMLElement);
+        expect(rawSource(withThinking.message)?.textContent).toBe("最终答案内容");
+        // The reasoning column stays visible and untouched
+        expect(thinkingEl?.isConnected).toBeTrue();
+        expect(thinkingEl?.textContent).toBe("已经思考过了");
+        // Only the reply column is hidden
+        expect(markdownColumn(withThinking.message).getAttribute("data-md-raw-mode")).toBe("1");
+        clickOn(rawToggle(withThinking.message) as HTMLElement);
     });
 
     test("renders the source as literal text, never as live HTML", async () => {

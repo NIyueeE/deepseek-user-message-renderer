@@ -2,7 +2,7 @@
 // @name         DeepSeek User Message Markdown Renderer
 // @name:zh-CN   DeepSeek 用户消息 Markdown 渲染器
 // @namespace    http://tampermonkey.net/
-// @version      1.1.0
+// @version      1.1.1
 // @description  Render your own messages on DeepSeek web with native-style Markdown, LaTeX math, and official code blocks; safe editing and history highlight included.
 // @description:zh-CN  让 DeepSeek 网页版中你自己发送的消息以原生样式渲染 Markdown、LaTeX 公式和官方风格代码块;支持安全编辑与历史消息高亮。
 // @author       NIyueeE
@@ -1158,41 +1158,45 @@
     // 10. Assistant raw/rendered toggle: a native-style button injected into the
     //     assistant message's action bar (next to the copy button) that switches
     //     between the rendered Markdown (default) and the raw Markdown source.
-    //     The assistant message's own DOM is never mutated: the toggle only adds
-    //     a data attribute to the message column (hiding the rendered output via
-    //     the injected stylesheet) and puts a <pre> sibling next to it. Reverting
-    //     removes both, so toggling is lossless and idempotent, and every node
-    //     the host app recorded stays valid.
+    //     The assistant message's own DOM is never mutated: the toggle only marks
+    //     the rendered Markdown column (hidden by the injected stylesheet) and
+    //     puts a <pre> sibling next to it. Reverting removes both, so toggling is
+    //     lossless and idempotent, and every node the host app recorded stays
+    //     valid.
     //
-    //     The raw Markdown is read from the React fiber's memoized props: the
-    //     assistant Markdown component is invoked as a function component whose
-    //     props carry the original source, and React stores that props object on
-    //     the instances it renders. Unlike the DOM, which keeps only what
-    //     rendered, the memoized props are not re-created per call, so the
-    //     reference is stable across scans and safe to cache. Builds that
-    //     minify the prop name still work: the string prop is found by content
-    //     once the fiber is known.
+    //     Current build layout (verified against the live DOM): the reply and its
+    //     action row are SIBLINGS inside the assistant list item —
+    //       div._4f9bf79._43c05b5
+    //         div.ds-message                      <- the reply
+    //           div.ds-assistant-message-main-content.ds-markdown   <- the answer
+    //         div.ds-flex._0a3d93b                <- action row (copy/reply)
+    //           div.ds-flex._965abe9._54866f7
+    //             div[role=button].ds-button ...  <- the copy button
+    //     so the row must be looked for as a sibling, not inside .ds-message.
+    //
+    //     The raw Markdown comes from the React fiber's memoized props. The
+    //     assistant Markdown component exposes the answer as `markdown` and the
+    //     reasoning chain as `content`; the thinking block renders into
+    //     .ds-think-content, which is excluded so the toggle can never show the
+    //     reasoning instead of the reply. Prop names survive minification, and
+    //     the memoized props object is stable across renders — unlike the DOM,
+    //     which keeps only what rendered — so the value is safe to cache.
     const RAW_BUTTON_ATTR = "data-md-raw-toggle";
     // Button labels: [0] while the raw source is shown (action: back to
     // rendered), [1] while the message is rendered (action: show raw source)
     const RAW_TOGGLE_TITLES = ["切换到渲染视图", "查看原始 Markdown"];
-    // Action-bar containers that may hold our button: the copy/reply row of the
-    // assistant message (hashed classes from the current build; the stable
-    // ds-flex classes are a fallback for builds that renamed them)
-    const ACTION_ROW_SELECTORS = [
-        "div.ds-flex._0a3d93b",
-        "div.ds-flex._965abe9",
-        "div.ds-flex._54866f7",
-        ".ds-message > div.ds-flex",
-        ".ds-message > div[class*='ds-flex']",
-        ".ds-message > div[class*='ds-button']",
-    ];
-    // The assistant's rendered Markdown column (hashed class from the current
-    // build) — also used to locate the message for the fiber scan
-    const ASSISTANT_MARKDOWN_SELECTORS = [".ds-assistant-message-main-content", ".ds-markdown"];
+    // The reasoning chain container: its Markdown must never be mistaken for the
+    // reply, and its React prop is `content` rather than `markdown`
+    const THINKING_SELECTOR = ".ds-think-content";
+    // The rendered reply column, most specific first
+    const ANSWER_SELECTORS = [".ds-assistant-message-main-content", ".ds-markdown"];
+    // Candidate prop names for the raw source, in priority order. `markdown` is
+    // the reply; `content` is the thinking chain (only reached for elements that
+    // are not inside .ds-think-content).
+    const MARKDOWN_PROP_NAMES = ["markdown", "content", "source", "raw", "text", "value"];
 
-    // Per-assistant-message state: the injected button, the Markdown column,
-    // the raw source, and whether the raw view is currently shown
+    // Per-assistant-message state: the injected button, the Markdown column, the
+    // raw source, and whether the raw view is currently shown
     const ASSISTANT_STATE = new WeakMap();
     // Cache the host's memoized props per Markdown element: the raw source
     // cannot change for a given element (a new message means a new element), so
@@ -1201,8 +1205,10 @@
     // Messages whose toggle was already injected; only these are refreshed on
     // later scans, so the frequent observer scans stay small
     const TRACKED_ASSISTANT_MESSAGES = new Set();
+    // Messages for which the "no readable source" diagnostic was already logged
+    const SOURCE_WARNED = new WeakSet();
 
-    // React stores the props object on the internal instance it renders
+    // React stores the internal fiber as a property on the DOM node
     function getFiberFrom(el) {
         for (const key of Object.keys(el)) {
             if (key.startsWith("__reactFiber$") || key.startsWith("__reactInternalInstance$")) {
@@ -1211,12 +1217,6 @@
         }
         return null;
     }
-
-    // Prop names the assistant Markdown component may receive its source under.
-    // Object property names survive production minification (uglify/terser only
-    // mangle them with an explicit mangle-props option), so the named lookup is
-    // the reliable path.
-    const MARKDOWN_PROP_NAMES = ["content", "markdown", "source", "raw", "text", "value"];
 
     // Rank a candidate source against the rendered column: strip everything that
     // is not a letter, digit, or CJK character and check that the beginning of
@@ -1241,20 +1241,20 @@
         return source.includes(domText.slice(0, Math.min(12, domText.length)));
     }
 
-    // Walk up from the Markdown column to the component that owns its source and
-    // return the original Markdown. The best-matching named prop wins; when none
-    // matches (rich rendering can diverge immediately), the first named prop is
-    // still returned — object property names survive minification, so a named
-    // prop is trustworthy.
+    // Walk up from the Markdown column to the component that owns its source.
+    // Prop names are tried in priority order (across the whole chain) so the
+    // reply's `markdown` always wins over an ancestor's `content`; the first
+    // candidate that matches the rendered output wins, and the highest-priority
+    // candidate is used when none matches.
     function findMarkdownProps(markdownEl, fiber) {
         let firstNamed = null;
-        let current = fiber;
-        for (let depth = 0; current && depth < 15; depth++, current = current.return) {
-            const props = current.memoizedProps;
-            if (!props || typeof props !== "object" || Array.isArray(props)) {
-                continue;
-            }
-            for (const key of MARKDOWN_PROP_NAMES) {
+        for (const key of MARKDOWN_PROP_NAMES) {
+            let current = fiber;
+            for (let depth = 0; current && depth < 15; depth++, current = current.return) {
+                const props = current.memoizedProps;
+                if (!props || typeof props !== "object" || Array.isArray(props)) {
+                    continue;
+                }
                 const value = props[key];
                 if (typeof value !== "string" || value.trim().length === 0) {
                     continue;
@@ -1287,21 +1287,57 @@
         return null;
     }
 
-    function findAssistantMarkdownEl(assistantMsg) {
-        for (const selector of ASSISTANT_MARKDOWN_SELECTORS) {
-            const el = assistantMsg.querySelector(selector);
-            if (el) {
-                return el;
+    // The rendered reply column: the first answer element that is NOT part of
+    // the reasoning chain (the thinking block also renders a .ds-markdown)
+    function findAnswerMarkdown(message) {
+        for (const selector of ANSWER_SELECTORS) {
+            for (const el of message.querySelectorAll(selector)) {
+                if (!el.closest(THINKING_SELECTOR)) {
+                    return el;
+                }
             }
         }
         return null;
     }
 
-    function findAssistantActionRow(assistantMsg) {
-        for (const selector of ACTION_ROW_SELECTORS) {
-            const row = assistantMsg.querySelector(selector);
-            if (row?.querySelector('[role="button"]') || row?.matches?.('[role="button"]')) {
+    // The action row holding the copy/reply buttons. In the current build it is
+    // a SIBLING of the reply .ds-message (inside the assistant list item); older
+    // or nested builds keep it inside the message, so both shapes are supported.
+    function findAssistantActionRow(message) {
+        let sibling = message.nextElementSibling;
+        for (let hops = 0; sibling && hops < 3; hops++, sibling = sibling.nextElementSibling) {
+            if (sibling.matches?.('[role="button"]') || sibling.querySelector?.('[role="button"]')) {
+                return sibling;
+            }
+        }
+        sibling = message.previousElementSibling;
+        for (let hops = 0; sibling && hops < 3; hops++, sibling = sibling.previousElementSibling) {
+            if (sibling.matches?.('[role="button"]') || sibling.querySelector?.('[role="button"]')) {
+                return sibling;
+            }
+        }
+        for (const row of message.querySelectorAll("div.ds-flex")) {
+            if (row.matches('[role="button"]') || row.querySelector('[role="button"]')) {
                 return row;
+            }
+        }
+        return null;
+    }
+
+    // The reverse of findAssistantActionRow: given the row (or anything inside
+    // it), return the reply message it belongs to. In the current build the row
+    // is a SIBLING of the message, so closest() alone is not enough — walk up to
+    // the shared list item and take its message child.
+    function findMessageForActionRow(row) {
+        const nested = row.closest?.(".ds-message");
+        if (nested) {
+            return nested;
+        }
+        let node = row.parentElement;
+        for (let depth = 0; node && depth < 3; depth++, node = node.parentElement) {
+            const message = node.querySelector?.(".ds-message");
+            if (message) {
+                return message;
             }
         }
         return null;
@@ -1330,11 +1366,11 @@
     // Build the button once per message and keep it injected. It deliberately
     // copies the sibling copy button's own classes so the page stylesheet
     // renders it exactly like the other action buttons.
-    function ensureRawToggleButton(assistantMsg, actionRow) {
-        let state = ASSISTANT_STATE.get(assistantMsg);
+    function ensureRawToggleButton(message, actionRow) {
+        let state = ASSISTANT_STATE.get(message);
         if (!state) {
             state = { button: null, markdownEl: null, rawSource: null, raw: false };
-            ASSISTANT_STATE.set(assistantMsg, state);
+            ASSISTANT_STATE.set(message, state);
         }
         if (state.button?.isConnected) {
             return state;
@@ -1343,17 +1379,19 @@
         // Adopt (and de-duplicate) a toggle that is already in this message: the
         // host can re-render or clone the node, which would otherwise leave two
         // buttons or an untracked one behind
-        const existingButtons = assistantMsg.querySelectorAll(`[${RAW_BUTTON_ATTR}]`);
+        const existingButtons = message.parentElement
+            ? message.parentElement.querySelectorAll(`[${RAW_BUTTON_ATTR}]`)
+            : [];
         if (existingButtons.length > 0) {
             const [kept, ...extras] = existingButtons;
             for (const extra of extras) {
                 extra.remove();
             }
             state.button = kept;
-            TRACKED_ASSISTANT_MESSAGES.add(assistantMsg);
+            TRACKED_ASSISTANT_MESSAGES.add(message);
             return state;
         }
-        const doc = assistantMsg.ownerDocument;
+        const doc = message.ownerDocument;
         const button = doc.createElement("div");
         button.setAttribute("role", "button");
         button.setAttribute("tabindex", "0");
@@ -1381,7 +1419,7 @@
         state.button = button;
         // Track the message so later scans keep the toggle and the raw view
         // consistent with the host's DOM
-        TRACKED_ASSISTANT_MESSAGES.add(assistantMsg);
+        TRACKED_ASSISTANT_MESSAGES.add(message);
         return state;
     }
 
@@ -1397,15 +1435,15 @@
         button.setAttribute("title", state.raw ? RAW_TOGGLE_TITLES[0] : RAW_TOGGLE_TITLES[1]);
     }
 
-    function findRawSourceEl(assistantMsg) {
-        return assistantMsg.querySelector(`.${RAW_SOURCE_CLASS}`);
+    function findRawSourceEl(message) {
+        return message.querySelector(`.${RAW_SOURCE_CLASS}`);
     }
 
-    function showRawSource(assistantMsg, state) {
+    function showRawSource(message, state) {
         if (!state.rawSource || !state.markdownEl?.isConnected) {
             return;
         }
-        const existing = findRawSourceEl(assistantMsg);
+        const existing = findRawSourceEl(message);
         const markdownEl = state.markdownEl;
         // Already in the desired state: do nothing. The scan runs after every
         // relevant mutation, and re-creating the nodes here would mutate the DOM
@@ -1422,10 +1460,10 @@
         existing?.remove();
         // The host may have re-rendered the Markdown column: never leave a
         // stale hidden element behind
-        for (const el of assistantMsg.querySelectorAll(`[${RAW_MODE_ATTR}]`)) {
+        for (const el of message.querySelectorAll(`[${RAW_MODE_ATTR}]`)) {
             el.removeAttribute(RAW_MODE_ATTR);
         }
-        const pre = assistantMsg.ownerDocument.createElement("pre");
+        const pre = message.ownerDocument.createElement("pre");
         pre.className = RAW_SOURCE_CLASS;
         pre.textContent = state.rawSource;
         // Only the Markdown column is hidden, and the raw source is placed next
@@ -1437,9 +1475,9 @@
         syncRawToggleState(state);
     }
 
-    function showRenderedMessage(assistantMsg, state) {
-        findRawSourceEl(assistantMsg)?.remove();
-        for (const el of assistantMsg.querySelectorAll(`[${RAW_MODE_ATTR}]`)) {
+    function showRenderedMessage(message, state) {
+        findRawSourceEl(message)?.remove();
+        for (const el of message.querySelectorAll(`[${RAW_MODE_ATTR}]`)) {
             el.removeAttribute(RAW_MODE_ATTR);
         }
         state.raw = false;
@@ -1448,8 +1486,8 @@
 
     // Toggle one assistant message. The raw source is resolved once (and cached)
     // so repeated clicks and observer scans stay cheap.
-    function toggleAssistantRawView(assistantMsg) {
-        const markdownEl = findAssistantMarkdownEl(assistantMsg);
+    function toggleAssistantRawView(message) {
+        const markdownEl = findAnswerMarkdown(message);
         if (!markdownEl) {
             return;
         }
@@ -1457,17 +1495,17 @@
         if (raw == null) {
             return;
         }
-        const actionRow = findAssistantActionRow(assistantMsg);
+        const actionRow = findAssistantActionRow(message);
         if (!actionRow) {
             return;
         }
-        const state = ensureRawToggleButton(assistantMsg, actionRow);
+        const state = ensureRawToggleButton(message, actionRow);
         state.markdownEl = markdownEl;
         state.rawSource = raw;
         if (state.raw) {
-            showRenderedMessage(assistantMsg, state);
+            showRenderedMessage(message, state);
         } else {
-            showRawSource(assistantMsg, state);
+            showRawSource(message, state);
         }
     }
 
@@ -1475,32 +1513,47 @@
     // button the host re-rendered away, rebuild the raw view if the host
     // re-rendered the Markdown column, and drop the button when the source is
     // no longer readable (never leave a button that would do nothing)
-    function refreshAssistantMessage(assistantMsg) {
-        const state = ASSISTANT_STATE.get(assistantMsg);
+    function refreshAssistantMessage(message) {
+        const state = ASSISTANT_STATE.get(message);
         if (!state) {
             return;
         }
-        const markdownEl = findAssistantMarkdownEl(assistantMsg);
+        const markdownEl = findAnswerMarkdown(message);
         if (!markdownEl) {
             return;
         }
         const raw = readRawAssistantMarkdown(markdownEl);
         if (raw == null) {
-            showRenderedMessage(assistantMsg, state);
+            showRenderedMessage(message, state);
             state.button?.remove();
             state.button = null;
             return;
         }
-        const actionRow = findAssistantActionRow(assistantMsg);
+        const actionRow = findAssistantActionRow(message);
         if (!actionRow) {
             return;
         }
         state.markdownEl = markdownEl;
         state.rawSource = raw;
-        ensureRawToggleButton(assistantMsg, actionRow);
+        ensureRawToggleButton(message, actionRow);
         if (state.raw) {
-            showRawSource(assistantMsg, state);
+            showRawSource(message, state);
         }
+    }
+
+    // Locate the assistant reply messages: .ds-message elements outside a user
+    // message group that render a reply column
+    function findAssistantMessages() {
+        const messages = [];
+        for (const message of document.querySelectorAll(".ds-message")) {
+            if (message.closest("._9663006")) {
+                continue;
+            }
+            if (findAnswerMarkdown(message)) {
+                messages.push(message);
+            }
+        }
+        return messages;
     }
 
     // Only messages whose toggle was already injected are tracked, so the
@@ -1509,54 +1562,56 @@
     function processAssistantMessages() {
         // 1. Keep the toggles already injected consistent with the host's DOM
         //    (re-attach a button the host re-rendered away, rebuild the raw view)
-        for (const assistantMsg of Array.from(TRACKED_ASSISTANT_MESSAGES)) {
-            if (!assistantMsg.isConnected) {
-                TRACKED_ASSISTANT_MESSAGES.delete(assistantMsg);
+        for (const message of Array.from(TRACKED_ASSISTANT_MESSAGES)) {
+            if (!message.isConnected) {
+                TRACKED_ASSISTANT_MESSAGES.delete(message);
                 continue;
             }
             try {
-                refreshAssistantMessage(assistantMsg);
+                refreshAssistantMessage(message);
             } catch (err) {
                 console.error("Assistant raw toggle refresh failed", err);
             }
         }
-        // 2. Inject the toggle for assistant messages that do not have one yet.
-        //    The action row only exists once the reply is complete, which both
-        //    keeps this off the streaming hot path and avoids a toggle on a
+        // 2. Inject the toggle for assistant replies that do not have one yet.
+        //    The action row only exists once the reply is complete, which keeps
+        //    this off the streaming hot path and avoids a toggle on a
         //    half-written message.
-        for (const assistantMsg of document.querySelectorAll(".ds-message")) {
-            if (TRACKED_ASSISTANT_MESSAGES.has(assistantMsg)) {
+        for (const message of findAssistantMessages()) {
+            if (TRACKED_ASSISTANT_MESSAGES.has(message)) {
                 continue;
             }
             try {
-                maybeInjectAssistantToggle(assistantMsg);
+                injectAssistantToggle(message);
             } catch (err) {
                 console.error("Assistant raw toggle injection failed", err);
             }
         }
     }
 
-    function maybeInjectAssistantToggle(assistantMsg) {
-        // Only assistant messages: user messages live in a _9663006 group and
-        // also carry a ds-markdown column (this script renders them), but the
-        // raw/rendered toggle is meant for the assistant's replies only
-        if (assistantMsg.closest("._9663006")) {
-            return;
-        }
-        // The rendered Markdown column and the action row must both be present
-        const markdownEl = findAssistantMarkdownEl(assistantMsg);
+    function injectAssistantToggle(message) {
+        const markdownEl = findAnswerMarkdown(message);
         if (!markdownEl) {
             return;
         }
-        const actionRow = findAssistantActionRow(assistantMsg);
+        const actionRow = findAssistantActionRow(message);
         if (!actionRow) {
             return;
         }
         const raw = readRawAssistantMarkdown(markdownEl);
         if (raw == null) {
+            // No readable source (a build whose React internals changed, or a
+            // hand-written/bot message): never inject a button that would do
+            // nothing. Warned once per message so a real break stays diagnosable.
+            if (!SOURCE_WARNED.has(message)) {
+                SOURCE_WARNED.add(message);
+                console.warn(
+                    "[deepseek-user-message-renderer] assistant reply has no readable raw Markdown; raw toggle not injected",
+                );
+            }
             return;
         }
-        const state = ensureRawToggleButton(assistantMsg, actionRow);
+        const state = ensureRawToggleButton(message, actionRow);
         state.markdownEl = markdownEl;
         state.rawSource = raw;
         syncRawToggleState(state);
@@ -1724,7 +1779,7 @@
         // handled before the user-message logic (which requires _9663006)
         const rawToggle = target.closest(`[${RAW_BUTTON_ATTR}]`);
         if (rawToggle) {
-            const assistantMsg = rawToggle.closest(".ds-message");
+            const assistantMsg = findMessageForActionRow(rawToggle);
             if (assistantMsg) {
                 try {
                     toggleAssistantRawView(assistantMsg);
@@ -1826,6 +1881,18 @@
         return Boolean(node.closest?.(`[${RAW_BUTTON_ATTR}]`) || node.querySelector?.(`[${RAW_BUTTON_ATTR}]`));
     }
 
+    // True when the node lives in the same list item as a reply message: the
+    // action row is a sibling of .ds-message in the current build, so the check
+    // walks a few ancestors up looking for the message.
+    function belongsToAssistantItem(node) {
+        for (let cur = node, depth = 0; cur && depth < 3; depth++, cur = cur.parentElement) {
+            if (cur.querySelector?.(".ds-message")) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     // True when a node is, or contains, an action button of an assistant
     // message. Watching for it is what makes the toggle appear on replies that
     // finish AFTER the script started, while assistant streaming text (which is
@@ -1834,10 +1901,10 @@
         if (node?.nodeType !== 1) {
             return false;
         }
-        if (!node.closest?.(".ds-message")) {
+        if (!node.matches?.('[role="button"]') && !node.querySelector?.('[role="button"]')) {
             return false;
         }
-        return node.matches?.('[role="button"]') || Boolean(node.querySelector?.('[role="button"]'));
+        return belongsToAssistantItem(node);
     }
 
     // Only relevant mutations should trigger a scan: anything inside a user
