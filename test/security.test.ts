@@ -145,4 +145,21 @@ describe("HTML safety policy", () => {
         expect(rendered.innerHTML).toContain("&lt;zzz&gt;");
         expect(rendered.innerHTML).toContain("&lt;/ZZZ&gt;");
     });
+
+    test("tolerates out-of-range numeric character references", async () => {
+        // String.fromCodePoint throws RangeError above U+10FFFF; that used to
+        // abort the whole parse and silently drop the message to plain text
+        // (browsers replace such references with U+FFFD instead)
+        const rendered = await render('text <b title="&#x110000;">bold</b> and <i title="&#99999999999;">italic</i>');
+
+        expect(rendered.querySelector("b")?.textContent).toBe("bold");
+        expect(rendered.querySelector("i")?.textContent).toBe("italic");
+    });
+
+    test("still blocks dangerous schemes next to an out-of-range reference", async () => {
+        const rendered = await render('<a href="javascript:alert(1)&#x110000;">x</a>');
+
+        expect(rendered.querySelector("a")).toBeNull();
+        expect(rendered.innerHTML).toContain("&lt;a");
+    });
 });

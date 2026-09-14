@@ -168,6 +168,13 @@ describe("user message Markdown rendering", () => {
                 "[data-md-collapsible] > :not(.md-user-markdown):not(.ds-collapsible-text-toggle-button) {" +
                 " position: absolute !important; top: 0 !important; left: 0 !important;" +
                 " width: 100% !important; visibility: hidden !important; }",
+            // Assistant raw mode hides only the Markdown column and styles the
+            // injected raw-source <pre>
+            "[data-md-raw-mode] { display: none !important; }" +
+                ".md-raw-source { margin: 0; padding: 0; background: transparent; border: 0;" +
+                " font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;" +
+                " font-size: 0.9em; line-height: 1.6; white-space: pre-wrap; word-break: break-word;" +
+                " overflow-wrap: anywhere; }",
         ]);
         // KaTeX and highlight.js run on every rendered message
         expect(env.mathCalls.length).toBeGreaterThan(0);
@@ -371,6 +378,78 @@ describe("user message Markdown rendering", () => {
             const paragraph = content.querySelector("p");
             expect(paragraph?.querySelectorAll("br").length).toBe(1);
             expect(paragraph?.textContent).toBe("复制文本。红色文字");
+        });
+
+        test("a blank line after a blockquote ends the quote instead of quoting the next line", async () => {
+            // Reported bug: "> test\n\n你好" rendered BOTH lines inside the
+            // quote. Collapsing the blank line to a chat-style <br> turned the
+            // second line into a Markdown lazy continuation of the blockquote.
+            const { content } = appendWrappedUserMessage(env.document, "> test\n\n你好");
+            await settle();
+
+            const quote = content.querySelector("blockquote");
+            expect(quote?.textContent).toBe("test");
+            expect(quote?.textContent).not.toContain("你好");
+            const paragraphs = content.querySelectorAll("p");
+            expect(paragraphs.length).toBe(2);
+            expect(paragraphs[1]?.textContent).toBe("你好");
+        });
+
+        test("a blank line after a list item keeps the next line outside the list", async () => {
+            const { content } = appendWrappedUserMessage(env.document, "- 项目 1\n\n普通段落");
+            await settle();
+
+            expect(content.querySelector("li")?.textContent).toBe("项目 1");
+            expect(content.querySelector("li")?.textContent).not.toContain("普通段落");
+            const paragraphs = content.querySelectorAll("p");
+            expect(paragraphs.length).toBe(1);
+            expect(paragraphs[0]?.textContent).toBe("普通段落");
+        });
+
+        test("a blank line after an ordered list keeps the next line outside the list", async () => {
+            const { content } = appendWrappedUserMessage(env.document, "1. 第一步\n\n结束语");
+            await settle();
+
+            expect(content.querySelector("ol li")?.textContent).toBe("第一步");
+            expect(content.querySelector("ol li")?.textContent).not.toContain("结束语");
+            expect(content.querySelector("p")?.textContent).toBe("结束语");
+        });
+
+        test("a blank line after a blockquote keeps a following list outside the quote", async () => {
+            const { content } = appendWrappedUserMessage(env.document, "> 引用\n\n- 项目");
+            await settle();
+
+            const quote = content.querySelector("blockquote");
+            expect(quote?.querySelector("li")).toBeNull();
+            expect(quote?.textContent).toBe("引用");
+            expect(content.querySelector("ul li")?.textContent).toBe("项目");
+        });
+
+        test("keeps multi-line blockquotes and lists compact (no forced paragraph gaps)", async () => {
+            // The blank-line guard must only fire when the next line LEAVES the
+            // construct; the chat-style compact spacing is preserved otherwise
+            const quoted = appendWrappedUserMessage(env.document, "> 第一行\n\n> 第二行");
+            const listed = appendWrappedUserMessage(env.document, "- 第一项\n\n- 第二项");
+            await settle();
+
+            expect(quoted.content.querySelectorAll("blockquote").length).toBe(1);
+            expect(quoted.content.querySelector("blockquote")?.textContent).toBe("第一行第二行");
+            // The list stays tight, exactly as it renders without the blank line
+            expect(listed.content.querySelectorAll("li").length).toBe(2);
+            expect(listed.content.querySelectorAll("li p").length).toBe(0);
+        });
+
+        test("a blank line after a table body keeps the next line out of the table", async () => {
+            const { content } = appendWrappedUserMessage(
+                env.document,
+                ["| A | B |", "| --- | --- |", "| 1 | 2 |", "", "表格之后的段落"].join("\n"),
+            );
+            await settle();
+
+            const rows = content.querySelectorAll("tbody tr");
+            expect(rows.length).toBe(1);
+            expect(content.querySelector("table")?.textContent).not.toContain("表格之后的段落");
+            expect(content.querySelector("p")?.textContent).toBe("表格之后的段落");
         });
     });
 

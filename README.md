@@ -16,6 +16,15 @@ editing, re-rendering, or the history-item highlight.
 - **Native-style Markdown**: headings, paragraphs, lists, inline code, links,
   and blockquotes rendered like DeepSeek's own markdown; a single newline is a
   soft line break (GFM style), so multi-line input keeps its line breaks.
+  A blank line still ends a blockquote, list item, or table body instead of
+  letting the next line be absorbed as a Markdown lazy continuation (so
+  `> test` + blank line + `你好` no longer quotes both lines).
+- **Assistant raw/rendered toggle**: every assistant reply gets a native-style
+  button next to its copy button that switches between the rendered Markdown
+  (default) and the exact raw Markdown source the assistant produced, read from
+  the React tree. It is a pure view switch: the message's own DOM is never
+  mutated, toggling is lossless, and the button stays consistent across
+  re-renders.
 - **LaTeX math** via KaTeX: `$...$`, `$$...$$`, `\(...\)`, `\[...\]`.
 - **Code blocks rebuilt into DeepSeek's official `md-code-block` structure**:
   banner with the language label, native light/dark theme, corner decorations,
@@ -88,6 +97,10 @@ bun run lint:fix  # auto-fix formatting and lint issues
   in DeepSeek's collapsible container render into a sibling container while the
   host's own child nodes stay alive; toggle re-checks, edit restore, cancel
   re-render, theme rebuild, and stale-height handling on expand.
+- [`test/assistant-raw.test.ts`](test/assistant-raw.test.ts): the assistant
+  raw/rendered toggle — injection into the copy button's row, default rendered
+  state, lossless toggling, idempotency across scans, re-injection after a host
+  re-render, per-message independence, and user messages staying untouched.
 - [`test/marked-quirk.test.ts`](test/marked-quirk.test.ts): regression guard
   for marked 18 (a code fence directly after a paragraph whose content is
   `---` parses as a code block; marked <=12 misparsed it as a setext heading).

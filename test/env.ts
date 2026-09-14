@@ -233,6 +233,78 @@ export function appendMessageWithActions(
     return { group, message, content, editButton, copyButton, cancelButton, collapsible, toggle };
 }
 
+export interface AssistantFixture {
+    group: HTMLElement;
+    message: HTMLElement;
+    /** The rendered Markdown column (carries the React fiber in real builds) */
+    markdown: HTMLElement;
+    /** The copy/reply action row our toggle button is injected into */
+    actionRow: HTMLElement;
+    copyButton: HTMLElement;
+    /** The raw Markdown the fake React fiber exposes */
+    raw: string;
+}
+
+/**
+ * Append a DeepSeek assistant message with the action bar the raw/rendered
+ * toggle is injected into. The rendered Markdown column carries a fake React
+ * fiber (`__reactFiber$...`) whose memoizedProps hold the original source, which
+ * is how the userscript reads the raw Markdown in production.
+ *
+ * Set `withFiber: false` to simulate a host build whose source cannot be read
+ * (e.g. a different React version, or a hand-written/bot message).
+ */
+export function appendAssistantMessage(
+    document: Document,
+    raw: string,
+    options?: { rendered?: string; withFiber?: boolean },
+): AssistantFixture {
+    const group = document.createElement("div");
+    // Deliberately NOT the user-message group class (_9663006): assistant
+    // messages live in their own list item, and the toggle must stay excluded
+    // from user messages
+    group.className = "ds-message-item";
+
+    const message = document.createElement("div");
+    message.className = "ds-message";
+
+    const markdown = document.createElement("div");
+    markdown.className = "ds-assistant-message-main-content ds-markdown";
+    markdown.innerHTML = options?.rendered ?? `<p>${raw.replace(/\*\*/g, "")}</p>`;
+    message.appendChild(markdown);
+
+    // Mirror the copy button's real structure: the action row is a ds-flex row
+    // with the hashed classes of the current build
+    const actionRow = document.createElement("div");
+    actionRow.className = "ds-flex _0a3d93b";
+    actionRow.setAttribute("style", "align-items: center; gap: 10px; flex-wrap: wrap-reverse;");
+    const innerRow = document.createElement("div");
+    innerRow.className = "ds-flex _965abe9 _54866f7";
+    const copyButton = document.createElement("div");
+    copyButton.setAttribute("role", "button");
+    copyButton.setAttribute("tabindex", "0");
+    copyButton.className =
+        "ds-button ds-button--iconLabelTertiary ds-button--icon ds-button--capsule ds-button--xs db183363";
+    copyButton.innerHTML = '<div class="ds-button__icon ds-button__icon--last-child"></div>';
+    innerRow.appendChild(copyButton);
+    actionRow.appendChild(innerRow);
+    message.appendChild(actionRow);
+    group.appendChild(message);
+    document.body.appendChild(group);
+
+    if (options?.withFiber !== false) {
+        // React assigns the fiber as a plain (enumerable) property on the node
+        const fiber = { memoizedProps: { content: raw }, return: null };
+        Object.defineProperty(markdown, "__reactFiber$test", {
+            value: fiber,
+            enumerable: true,
+            configurable: true,
+        });
+    }
+
+    return { group, message, markdown, actionRow, copyButton, raw };
+}
+
 let loadUserscriptCalls = 0;
 
 /**

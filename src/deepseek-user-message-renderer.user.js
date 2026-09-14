@@ -2,7 +2,7 @@
 // @name         DeepSeek User Message Markdown Renderer
 // @name:zh-CN   DeepSeek 用户消息 Markdown 渲染器
 // @namespace    http://tampermonkey.net/
-// @version      1.0.10
+// @version      1.1.0
 // @description  Render your own messages on DeepSeek web with native-style Markdown, LaTeX math, and official code blocks; safe editing and history highlight included.
 // @description:zh-CN  让 DeepSeek 网页版中你自己发送的消息以原生样式渲染 Markdown、LaTeX 公式和官方风格代码块;支持安全编辑与历史消息高亮。
 // @author       NIyueeE
@@ -59,6 +59,26 @@
         );
     } catch (e) {
         console.warn("Failed to inject collapsible style", e);
+    }
+
+    // Assistant "raw source" mode: only the rendered Markdown column is hidden
+    // while the raw source is shown in a <pre> next to it. The action bar (which
+    // holds the toggle) therefore stays visible, and the assistant message's own
+    // nodes are never mutated — the toggle is a pure view switch and reverts
+    // losslessly. display:none is safe here: unlike the collapsible user-message
+    // host nodes, nothing measures this column.
+    const RAW_MODE_ATTR = "data-md-raw-mode";
+    const RAW_SOURCE_CLASS = "md-raw-source";
+    try {
+        GM_addStyle(
+            `[${RAW_MODE_ATTR}] { display: none !important; }` +
+                `.${RAW_SOURCE_CLASS} { margin: 0; padding: 0; background: transparent; border: 0;` +
+                " font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;" +
+                " font-size: 0.9em; line-height: 1.6; white-space: pre-wrap; word-break: break-word;" +
+                " overflow-wrap: anywhere; }",
+        );
+    } catch (e) {
+        console.warn("Failed to inject raw-mode style", e);
     }
 
     // The user message text element: the hashed class is confirmed stable in
@@ -204,6 +224,19 @@
     // "jav&#x61;script:" can never slip through as a live handler.
     const DANGEROUS_SCHEME_RE = /^(?:javascript|vbscript|data|file):/i;
 
+    // Numeric character references are decoded defensively: String.fromCodePoint
+    // throws RangeError for anything outside Unicode, and browsers replace such
+    // references with U+FFFD instead. A single out-of-range reference (e.g.
+    // "&#x110000;" in a message) used to throw out of the renderer, abort the
+    // whole parse, and silently drop that entire message back to plain text.
+    function codePointFromRef(digits, radix) {
+        const code = parseInt(digits, radix);
+        if (!Number.isFinite(code) || code < 0 || code > 0x10ffff || (code >= 0xd800 && code <= 0xdfff)) {
+            return "\ufffd";
+        }
+        return String.fromCodePoint(code);
+    }
+
     function decodeAttrEntities(value) {
         const named = {
             amp: "&",
@@ -216,8 +249,8 @@
             nbsp: "\u00a0",
         };
         return value
-            .replace(/&#x([0-9a-f]+);/gi, (_, hex) => String.fromCodePoint(parseInt(hex, 16)))
-            .replace(/&#(\d+);/g, (_, dec) => String.fromCodePoint(parseInt(dec, 10)))
+            .replace(/&#x([0-9a-f]+);/gi, (_, hex) => codePointFromRef(hex, 16))
+            .replace(/&#(\d+);/g, (_, dec) => codePointFromRef(dec, 10))
             .replace(/&(amp|lt|gt|quot|apos|Tab|NewLine|nbsp);/g, (_, name) => named[name]);
     }
 
@@ -748,18 +781,80 @@
         return out;
     }
 
+    // Lines that OPEN a construct ending at the next blank line. Collapsing the
+    // blank line away would let the following line become a lazy continuation of
+    // that construct: "> test\n\n你好" would render BOTH lines inside the quote,
+    // and "- a\n\nplain" would put "plain" inside the list item.
+    const QUOTE_LINE_RE = /^[ \t]{0,3}>/;
+    const LIST_ITEM_RE = /^[ \t]{0,3}(?:[-*+]|\d{1,9}[.)])(?:[ \t]|$)/;
+    const HTML_BLOCK_LINE_RE = /^[ \t]{0,3}</;
+    // A GFM table delimiter row ("| --- | :--: |"); tables only exist because
+    // marked runs with GFM on.
+    const TABLE_DELIMITER_RE = /^[ \t]{0,3}\|?[ \t]*:?-+:?[ \t]*(?:\|[ \t]*:?-+:?[ \t]*)*\|?[ \t]*$/;
+
+    function isTableDelimiterRow(line) {
+        return line.includes("|") && TABLE_DELIMITER_RE.test(line);
+    }
+
+    // True when the text right before the blank run is part of a table body
+    // (a delimiter row is open and every line since is a table row)
+    function endsInsideTable(before) {
+        const lines = before.split("\n");
+        for (let i = lines.length - 1; i >= 0; i--) {
+            if (!lines[i].includes("|")) {
+                return false;
+            }
+            if (isTableDelimiterRow(lines[i])) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    function opensStrictContainer(line) {
+        return QUOTE_LINE_RE.test(line) || LIST_ITEM_RE.test(line) || HTML_BLOCK_LINE_RE.test(line);
+    }
+
+    // True when the line after the blank run stays inside the same construct,
+    // so the blank line may still collapse (multi-line quotes and lists keep
+    // their compact chat-style spacing)
+    function continuesContainer(prevLine, nextLine) {
+        if (QUOTE_LINE_RE.test(prevLine)) {
+            return QUOTE_LINE_RE.test(nextLine);
+        }
+        if (LIST_ITEM_RE.test(prevLine)) {
+            return LIST_ITEM_RE.test(nextLine) || /^[ \t]/.test(nextLine);
+        }
+        return false;
+    }
+
+    // The blank line between the two lines must survive: it is either needed by
+    // a setext underline / footnote definition (so they stay separate blocks
+    // instead of collapsing into the previous paragraph), or it is what ends a
+    // blockquote / list item / HTML block / table body.
+    function mustKeepBlankLine(prevLine, nextLine, before) {
+        if (/^[ \t]*(?:(?:-{3,}|={3,})[ \t]*(?:\n|$)|\[\^[^\]]+\]:)/.test(nextLine)) {
+            return true;
+        }
+        if (endsInsideTable(before)) {
+            return !nextLine.includes("|");
+        }
+        return opensStrictContainer(prevLine) && !continuesContainer(prevLine, nextLine);
+    }
+
     function collapseBlankRuns(text, beforeFence) {
         let collapsed = text
             // A newline right next to an explicit <br> would add a second
             // <br> through GFM soft breaks (breaks: true), so drop it
             .replace(/\n[ \t]*(?=<br\b)/gi, "")
             .replace(/(?<=<br\b[^>]*>)[ \t]*\n/gi, "")
-            // Keep a blank line before setext underlines (---, ===) and
-            // footnote definitions ([^1]: ...) so they stay separate blocks
-            // instead of collapsing into the previous paragraph
             .replace(/\n{2,}/g, (run, offset, whole) => {
                 const after = whole.slice(offset + run.length);
-                if (/^[ \t]*(?:(?:-{3,}|={3,})[ \t]*(?:\n|$)|\[\^[^\]]+\]:)/.test(after)) {
+                const before = whole.slice(0, offset);
+                const prevLine = before.slice(before.lastIndexOf("\n") + 1);
+                const nextBreak = after.indexOf("\n");
+                const nextLine = nextBreak === -1 ? after : after.slice(0, nextBreak);
+                if (mustKeepBlankLine(prevLine, nextLine, before)) {
                     return "\n\n";
                 }
                 return `\n${"\\\n".repeat(run.length - 2)}`;
@@ -1060,7 +1155,413 @@
         }
     }
 
-    // 10. Edit-button restore: when DeepSeek's "edit" is clicked it reads/takes
+    // 10. Assistant raw/rendered toggle: a native-style button injected into the
+    //     assistant message's action bar (next to the copy button) that switches
+    //     between the rendered Markdown (default) and the raw Markdown source.
+    //     The assistant message's own DOM is never mutated: the toggle only adds
+    //     a data attribute to the message column (hiding the rendered output via
+    //     the injected stylesheet) and puts a <pre> sibling next to it. Reverting
+    //     removes both, so toggling is lossless and idempotent, and every node
+    //     the host app recorded stays valid.
+    //
+    //     The raw Markdown is read from the React fiber's memoized props: the
+    //     assistant Markdown component is invoked as a function component whose
+    //     props carry the original source, and React stores that props object on
+    //     the instances it renders. Unlike the DOM, which keeps only what
+    //     rendered, the memoized props are not re-created per call, so the
+    //     reference is stable across scans and safe to cache. Builds that
+    //     minify the prop name still work: the string prop is found by content
+    //     once the fiber is known.
+    const RAW_BUTTON_ATTR = "data-md-raw-toggle";
+    // Button labels: [0] while the raw source is shown (action: back to
+    // rendered), [1] while the message is rendered (action: show raw source)
+    const RAW_TOGGLE_TITLES = ["切换到渲染视图", "查看原始 Markdown"];
+    // Action-bar containers that may hold our button: the copy/reply row of the
+    // assistant message (hashed classes from the current build; the stable
+    // ds-flex classes are a fallback for builds that renamed them)
+    const ACTION_ROW_SELECTORS = [
+        "div.ds-flex._0a3d93b",
+        "div.ds-flex._965abe9",
+        "div.ds-flex._54866f7",
+        ".ds-message > div.ds-flex",
+        ".ds-message > div[class*='ds-flex']",
+        ".ds-message > div[class*='ds-button']",
+    ];
+    // The assistant's rendered Markdown column (hashed class from the current
+    // build) — also used to locate the message for the fiber scan
+    const ASSISTANT_MARKDOWN_SELECTORS = [".ds-assistant-message-main-content", ".ds-markdown"];
+
+    // Per-assistant-message state: the injected button, the Markdown column,
+    // the raw source, and whether the raw view is currently shown
+    const ASSISTANT_STATE = new WeakMap();
+    // Cache the host's memoized props per Markdown element: the raw source
+    // cannot change for a given element (a new message means a new element), so
+    // a hit is always valid, which also keeps the frequent observer scans cheap
+    const RAW_SOURCE_CACHE = new WeakMap();
+    // Messages whose toggle was already injected; only these are refreshed on
+    // later scans, so the frequent observer scans stay small
+    const TRACKED_ASSISTANT_MESSAGES = new Set();
+
+    // React stores the props object on the internal instance it renders
+    function getFiberFrom(el) {
+        for (const key of Object.keys(el)) {
+            if (key.startsWith("__reactFiber$") || key.startsWith("__reactInternalInstance$")) {
+                return el[key];
+            }
+        }
+        return null;
+    }
+
+    // Prop names the assistant Markdown component may receive its source under.
+    // Object property names survive production minification (uglify/terser only
+    // mangle them with an explicit mangle-props option), so the named lookup is
+    // the reliable path.
+    const MARKDOWN_PROP_NAMES = ["content", "markdown", "source", "raw", "text", "value"];
+
+    // Rank a candidate source against the rendered column: strip everything that
+    // is not a letter, digit, or CJK character and check that the beginning of
+    // the rendered text still appears in the source. Used only to CHOOSE between
+    // several named props — never to reject the only candidate, because rich
+    // rendering (KaTeX, images, code blocks) legitimately diverges from the
+    // source early on and would otherwise hide a perfectly good answer.
+    function normalizeForCompare(text) {
+        return text.replace(/[^\p{L}\p{N}]+/gu, "");
+    }
+
+    function contentLooksLikeRender(markdownEl, candidate) {
+        const domText = normalizeForCompare(markdownEl.textContent || "");
+        if (domText.length < 8) {
+            // Too little rendered text to judge
+            return true;
+        }
+        const source = normalizeForCompare(candidate);
+        if (!source) {
+            return false;
+        }
+        return source.includes(domText.slice(0, Math.min(12, domText.length)));
+    }
+
+    // Walk up from the Markdown column to the component that owns its source and
+    // return the original Markdown. The best-matching named prop wins; when none
+    // matches (rich rendering can diverge immediately), the first named prop is
+    // still returned — object property names survive minification, so a named
+    // prop is trustworthy.
+    function findMarkdownProps(markdownEl, fiber) {
+        let firstNamed = null;
+        let current = fiber;
+        for (let depth = 0; current && depth < 15; depth++, current = current.return) {
+            const props = current.memoizedProps;
+            if (!props || typeof props !== "object" || Array.isArray(props)) {
+                continue;
+            }
+            for (const key of MARKDOWN_PROP_NAMES) {
+                const value = props[key];
+                if (typeof value !== "string" || value.trim().length === 0) {
+                    continue;
+                }
+                if (contentLooksLikeRender(markdownEl, value)) {
+                    return value;
+                }
+                firstNamed ??= value;
+            }
+        }
+        return firstNamed;
+    }
+
+    // The cached entry stores the render fingerprint it was read for: the
+    // virtualized message list can recycle a Markdown element for a different
+    // message, and the raw source must then be re-read rather than served from
+    // the cache (cheap enough — only messages the user toggled are tracked)
+    function readRawAssistantMarkdown(markdownEl) {
+        const fingerprint = markdownEl.textContent ?? "";
+        const cached = RAW_SOURCE_CACHE.get(markdownEl);
+        if (cached && cached.fingerprint === fingerprint) {
+            return cached.raw;
+        }
+        const fiber = getFiberFrom(markdownEl);
+        const raw = fiber ? findMarkdownProps(markdownEl, fiber) : null;
+        if (raw != null) {
+            RAW_SOURCE_CACHE.set(markdownEl, { raw, fingerprint });
+            return raw;
+        }
+        return null;
+    }
+
+    function findAssistantMarkdownEl(assistantMsg) {
+        for (const selector of ASSISTANT_MARKDOWN_SELECTORS) {
+            const el = assistantMsg.querySelector(selector);
+            if (el) {
+                return el;
+            }
+        }
+        return null;
+    }
+
+    function findAssistantActionRow(assistantMsg) {
+        for (const selector of ACTION_ROW_SELECTORS) {
+            const row = assistantMsg.querySelector(selector);
+            if (row?.querySelector('[role="button"]') || row?.matches?.('[role="button"]')) {
+                return row;
+            }
+        }
+        return null;
+    }
+
+    // Native-style icon: a small "</>" glyph, matching the neighbouring action
+    // buttons' stroke-based icon look
+    function buildRawToggleIcon(doc) {
+        const svg = doc.createElementNS(SVG_NS, "svg");
+        svg.setAttribute("width", "16");
+        svg.setAttribute("height", "16");
+        svg.setAttribute("viewBox", "0 0 16 16");
+        svg.setAttribute("fill", "none");
+        for (const d of ["M5.8 4.5L2.3 8l3.5 3.5", "M10.2 4.5L13.7 8l-3.5 3.5"]) {
+            const pathEl = doc.createElementNS(SVG_NS, "path");
+            pathEl.setAttribute("d", d);
+            pathEl.setAttribute("stroke", "currentColor");
+            pathEl.setAttribute("stroke-width", "1.3");
+            pathEl.setAttribute("stroke-linecap", "round");
+            pathEl.setAttribute("stroke-linejoin", "round");
+            svg.appendChild(pathEl);
+        }
+        return svg;
+    }
+
+    // Build the button once per message and keep it injected. It deliberately
+    // copies the sibling copy button's own classes so the page stylesheet
+    // renders it exactly like the other action buttons.
+    function ensureRawToggleButton(assistantMsg, actionRow) {
+        let state = ASSISTANT_STATE.get(assistantMsg);
+        if (!state) {
+            state = { button: null, markdownEl: null, rawSource: null, raw: false };
+            ASSISTANT_STATE.set(assistantMsg, state);
+        }
+        if (state.button?.isConnected) {
+            return state;
+        }
+        state.button = null;
+        // Adopt (and de-duplicate) a toggle that is already in this message: the
+        // host can re-render or clone the node, which would otherwise leave two
+        // buttons or an untracked one behind
+        const existingButtons = assistantMsg.querySelectorAll(`[${RAW_BUTTON_ATTR}]`);
+        if (existingButtons.length > 0) {
+            const [kept, ...extras] = existingButtons;
+            for (const extra of extras) {
+                extra.remove();
+            }
+            state.button = kept;
+            TRACKED_ASSISTANT_MESSAGES.add(assistantMsg);
+            return state;
+        }
+        const doc = assistantMsg.ownerDocument;
+        const button = doc.createElement("div");
+        button.setAttribute("role", "button");
+        button.setAttribute("tabindex", "0");
+        button.setAttribute("aria-disabled", "false");
+        const copyBtn = actionRow.querySelector('[role="button"]');
+        // Anchor after the copy button when there is one; a row that is itself a
+        // single button anchors on itself so the toggle is never nested inside it
+        const anchor = copyBtn ?? (actionRow.matches?.('[role="button"]') ? actionRow : null);
+        const nativeClasses = anchor
+            ? Array.from(anchor.classList).filter((cls) => !cls.startsWith("md-"))
+            : ["ds-button", "ds-button--iconLabelTertiary", "ds-button--icon", "ds-button--capsule", "ds-button--xs"];
+        button.className = ["md-raw-toggle", ...nativeClasses].join(" ");
+        button.setAttribute(RAW_BUTTON_ATTR, "1");
+        const icon = doc.createElement("div");
+        icon.className = "ds-button__icon ds-button__icon--last-child";
+        icon.appendChild(buildRawToggleIcon(doc));
+        button.appendChild(icon);
+        // Inserted directly after the copy button, inside the same row, so the
+        // toggle sits next to it exactly like the other action buttons
+        if (anchor) {
+            anchor.insertAdjacentElement("afterend", button);
+        } else {
+            actionRow.appendChild(button);
+        }
+        state.button = button;
+        // Track the message so later scans keep the toggle and the raw view
+        // consistent with the host's DOM
+        TRACKED_ASSISTANT_MESSAGES.add(assistantMsg);
+        return state;
+    }
+
+    // Reflect the current mode on the button: a highlighted "on" state plus a
+    // label describing the action a click performs
+    function syncRawToggleState(state) {
+        const button = state.button;
+        if (!button) {
+            return;
+        }
+        button.setAttribute("data-md-raw-active", state.raw ? "1" : "0");
+        button.setAttribute("aria-pressed", state.raw ? "true" : "false");
+        button.setAttribute("title", state.raw ? RAW_TOGGLE_TITLES[0] : RAW_TOGGLE_TITLES[1]);
+    }
+
+    function findRawSourceEl(assistantMsg) {
+        return assistantMsg.querySelector(`.${RAW_SOURCE_CLASS}`);
+    }
+
+    function showRawSource(assistantMsg, state) {
+        if (!state.rawSource || !state.markdownEl?.isConnected) {
+            return;
+        }
+        const existing = findRawSourceEl(assistantMsg);
+        const markdownEl = state.markdownEl;
+        // Already in the desired state: do nothing. The scan runs after every
+        // relevant mutation, and re-creating the nodes here would mutate the DOM
+        // again and re-trigger the observer forever.
+        if (
+            existing?.previousElementSibling === markdownEl &&
+            existing.textContent === state.rawSource &&
+            markdownEl.getAttribute(RAW_MODE_ATTR) === "1"
+        ) {
+            state.raw = true;
+            syncRawToggleState(state);
+            return;
+        }
+        existing?.remove();
+        // The host may have re-rendered the Markdown column: never leave a
+        // stale hidden element behind
+        for (const el of assistantMsg.querySelectorAll(`[${RAW_MODE_ATTR}]`)) {
+            el.removeAttribute(RAW_MODE_ATTR);
+        }
+        const pre = assistantMsg.ownerDocument.createElement("pre");
+        pre.className = RAW_SOURCE_CLASS;
+        pre.textContent = state.rawSource;
+        // Only the Markdown column is hidden, and the raw source is placed next
+        // to it — the host's recorded nodes are never touched, moved, or
+        // replaced, and the action bar stays usable
+        markdownEl.insertAdjacentElement("afterend", pre);
+        markdownEl.setAttribute(RAW_MODE_ATTR, "1");
+        state.raw = true;
+        syncRawToggleState(state);
+    }
+
+    function showRenderedMessage(assistantMsg, state) {
+        findRawSourceEl(assistantMsg)?.remove();
+        for (const el of assistantMsg.querySelectorAll(`[${RAW_MODE_ATTR}]`)) {
+            el.removeAttribute(RAW_MODE_ATTR);
+        }
+        state.raw = false;
+        syncRawToggleState(state);
+    }
+
+    // Toggle one assistant message. The raw source is resolved once (and cached)
+    // so repeated clicks and observer scans stay cheap.
+    function toggleAssistantRawView(assistantMsg) {
+        const markdownEl = findAssistantMarkdownEl(assistantMsg);
+        if (!markdownEl) {
+            return;
+        }
+        const raw = readRawAssistantMarkdown(markdownEl);
+        if (raw == null) {
+            return;
+        }
+        const actionRow = findAssistantActionRow(assistantMsg);
+        if (!actionRow) {
+            return;
+        }
+        const state = ensureRawToggleButton(assistantMsg, actionRow);
+        state.markdownEl = markdownEl;
+        state.rawSource = raw;
+        if (state.raw) {
+            showRenderedMessage(assistantMsg, state);
+        } else {
+            showRawSource(assistantMsg, state);
+        }
+    }
+
+    // Keep already-injected toggles consistent with the host's DOM: re-attach a
+    // button the host re-rendered away, rebuild the raw view if the host
+    // re-rendered the Markdown column, and drop the button when the source is
+    // no longer readable (never leave a button that would do nothing)
+    function refreshAssistantMessage(assistantMsg) {
+        const state = ASSISTANT_STATE.get(assistantMsg);
+        if (!state) {
+            return;
+        }
+        const markdownEl = findAssistantMarkdownEl(assistantMsg);
+        if (!markdownEl) {
+            return;
+        }
+        const raw = readRawAssistantMarkdown(markdownEl);
+        if (raw == null) {
+            showRenderedMessage(assistantMsg, state);
+            state.button?.remove();
+            state.button = null;
+            return;
+        }
+        const actionRow = findAssistantActionRow(assistantMsg);
+        if (!actionRow) {
+            return;
+        }
+        state.markdownEl = markdownEl;
+        state.rawSource = raw;
+        ensureRawToggleButton(assistantMsg, actionRow);
+        if (state.raw) {
+            showRawSource(assistantMsg, state);
+        }
+    }
+
+    // Only messages whose toggle was already injected are tracked, so the
+    // frequent observer scans stay small and messages whose DOM was recycled by
+    // the virtualized list drop out instead of growing the set forever
+    function processAssistantMessages() {
+        // 1. Keep the toggles already injected consistent with the host's DOM
+        //    (re-attach a button the host re-rendered away, rebuild the raw view)
+        for (const assistantMsg of Array.from(TRACKED_ASSISTANT_MESSAGES)) {
+            if (!assistantMsg.isConnected) {
+                TRACKED_ASSISTANT_MESSAGES.delete(assistantMsg);
+                continue;
+            }
+            try {
+                refreshAssistantMessage(assistantMsg);
+            } catch (err) {
+                console.error("Assistant raw toggle refresh failed", err);
+            }
+        }
+        // 2. Inject the toggle for assistant messages that do not have one yet.
+        //    The action row only exists once the reply is complete, which both
+        //    keeps this off the streaming hot path and avoids a toggle on a
+        //    half-written message.
+        for (const assistantMsg of document.querySelectorAll(".ds-message")) {
+            if (TRACKED_ASSISTANT_MESSAGES.has(assistantMsg)) {
+                continue;
+            }
+            try {
+                maybeInjectAssistantToggle(assistantMsg);
+            } catch (err) {
+                console.error("Assistant raw toggle injection failed", err);
+            }
+        }
+    }
+
+    function maybeInjectAssistantToggle(assistantMsg) {
+        // Only assistant messages: user messages live in a _9663006 group and
+        // also carry a ds-markdown column (this script renders them), but the
+        // raw/rendered toggle is meant for the assistant's replies only
+        if (assistantMsg.closest("._9663006")) {
+            return;
+        }
+        // The rendered Markdown column and the action row must both be present
+        const markdownEl = findAssistantMarkdownEl(assistantMsg);
+        if (!markdownEl) {
+            return;
+        }
+        const actionRow = findAssistantActionRow(assistantMsg);
+        if (!actionRow) {
+            return;
+        }
+        const raw = readRawAssistantMarkdown(markdownEl);
+        if (raw == null) {
+            return;
+        }
+        const state = ensureRawToggleButton(assistantMsg, actionRow);
+        state.markdownEl = markdownEl;
+        state.rawSource = raw;
+        syncRawToggleState(state);
+    }
+    // 11. Edit-button restore: when DeepSeek's "edit" is clicked it reads/takes
     //     over the message box content. If the box still holds the script's
     //     ds-markdown structure, the host app errors out. So the message box is
     //     restored to its original content before the event reaches the app
@@ -1219,6 +1720,21 @@
             return;
         }
 
+        // Assistant raw/rendered toggle: a pure view switch on our own button,
+        // handled before the user-message logic (which requires _9663006)
+        const rawToggle = target.closest(`[${RAW_BUTTON_ATTR}]`);
+        if (rawToggle) {
+            const assistantMsg = rawToggle.closest(".ds-message");
+            if (assistantMsg) {
+                try {
+                    toggleAssistantRawView(assistantMsg);
+                } catch (err) {
+                    console.error("Assistant raw toggle failed", err);
+                }
+            }
+            return;
+        }
+
         // Collapse/expand toggle of a collapsible long message: the host handles
         // the toggle itself; we only re-check the message once it has finished
         // (and lift its stale measured height when expanded — see below)
@@ -1275,6 +1791,15 @@
                 console.error("Message rendering failed", err);
             }
         });
+
+        // Keep the assistant raw/rendered toggles consistent with the host's
+        // DOM (the buttons are injected lazily, so this never modifies native
+        // messages that the user has not toggled)
+        try {
+            processAssistantMessages();
+        } catch (err) {
+            console.error("Assistant message scan failed", err);
+        }
     }
 
     // Batch processing: DOM changes are frequent, so coalesce them into a single
@@ -1291,10 +1816,35 @@
         });
     }
 
+    // True when a mutation node is our injected raw toggle or contains it: such
+    // mutations must be observed so a button the host re-rendered away is
+    // re-injected and the raw view is kept consistent
+    function touchesRawToggle(node) {
+        if (node?.nodeType !== 1) {
+            return false;
+        }
+        return Boolean(node.closest?.(`[${RAW_BUTTON_ATTR}]`) || node.querySelector?.(`[${RAW_BUTTON_ATTR}]`));
+    }
+
+    // True when a node is, or contains, an action button of an assistant
+    // message. Watching for it is what makes the toggle appear on replies that
+    // finish AFTER the script started, while assistant streaming text (which is
+    // not an action button) never triggers a scan.
+    function touchesAssistantActionBar(node) {
+        if (node?.nodeType !== 1) {
+            return false;
+        }
+        if (!node.closest?.(".ds-message")) {
+            return false;
+        }
+        return node.matches?.('[role="button"]') || Boolean(node.querySelector?.('[role="button"]'));
+    }
+
     // Only relevant mutations should trigger a scan: anything inside a user
-    // message group, new groups (appended outside any existing group), and
-    // theme changes (the body class). AI-streaming churn outside those areas is
-    // ignored, so the observer never scans the whole page per streamed token.
+    // message group, new groups (appended outside any existing group), theme
+    // changes (the body class), our own raw toggles, and assistant action bars.
+    // AI-streaming churn outside those areas is ignored, so the observer never
+    // scans the whole page per streamed token.
     function isRelevantMutation(records) {
         for (const record of records) {
             if (record.type === "characterData") {
@@ -1318,11 +1868,20 @@
                     // closest() covers nodes inside a group and new groups
                     // themselves; querySelector() covers wholesale list
                     // re-renders whose root sits outside any group
-                    if (node.closest?.("._9663006") || node.querySelector?.("._9663006")) {
+                    if (
+                        node.closest?.("._9663006") ||
+                        node.querySelector?.("._9663006") ||
+                        touchesRawToggle(node) ||
+                        touchesAssistantActionBar(node)
+                    ) {
                         return true;
                     }
                 }
-                if (record.target.closest?.("._9663006")) {
+                if (
+                    record.target.closest?.("._9663006") ||
+                    touchesRawToggle(record.target) ||
+                    touchesAssistantActionBar(record.target)
+                ) {
                     return true;
                 }
             }
