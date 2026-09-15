@@ -36,7 +36,7 @@ There is no build step: the script in `src/` is the artifact users install direc
 
 The script depends on DeepSeek's build-specific DOM: hashed class names (`_9663006`, `fbb737a4`), inline styles, and SVG path prefixes. When the site changes, work in this exact order:
 
-1. **Ground truth first.** Get the real DOM (ask the user to paste the message subtree) and a screenshot of the misbehavior. Rebuild that structure in fixtures exactly — including no whitespace between tags (real React output carries none; fixture indentation must never leak into text content).
+1. **Ground truth first.** Run `bun run fixture:check` and follow "Mandatory first step for any DOM/UI change" below: the checked-in capture (`test/fixtures/`) is the primary ground truth, and when it is stale or silent on the question you are asking, ask the user to re-capture. A pasted message subtree and a screenshot of the misbehavior are the fallback when a full capture is not warranted — either way, reproduce the real structure exactly, including no whitespace between tags (real React output carries none; fixture indentation must never leak into text content).
 2. **Root-cause before coding.** Classify the failure: host-app (React) reconciliation against nodes we changed, host measurement logic reading our modifications, selector drift, or Markdown parsing. Respect the host-app invariants below.
 3. **Unit tests** in `test/` with fixtures replicating the reported DOM. Every fix or feature ships with tests.
 4. **Headless browser verification** (see below) — happy-dom cannot catch CSS application, layout measurement, or reconciliation-timing bugs. All checks must pass.
@@ -55,7 +55,48 @@ These were learned the hard way; do not regress them:
 - **Intercept host-interactive elements in the capture phase** (edit button, collapse toggle): let the host's own handler commit first, then re-check on a short timer. Never fight its handler synchronously.
 - **Read the message text from the host's own content holder** (excluding our containers) and trim it — wrapper whitespace nodes break fence detection.
 
-### Headless browser verification
+### Test environments and what each one may claim
+
+There are three layers. **A result from one layer must never be reported as if it came from another** — that mistake has already shipped an overclaim once (a stand-in-fixture harness was described as verifying "the page's own stylesheet").
+
+| Layer | What it is | Proves | Cannot prove |
+| --- | --- | --- | --- |
+| **L1 — unit** (`bun test`, `test/env.ts`) | hand-written minimal DOM in happy-dom | selectors, parsing, dedup, edit/collapse state machines, HTML safety | real markup shape, any CSS |
+| **L2 — stand-in browser** (scratch `verify.mjs`) | a page the harness author wrote, with its own tokens and button CSS | structure, events, DOM invariants, measurement, timing (freezes/starvation) | **real-page styling** — its CSS is invented |
+| **L3 — real capture** (`test/fixtures/deepseek-chat.html` + its stylesheet) | verbatim SingleFile capture of the live page | real selector drift, real computed styles, real `md-code-block` / button / markdown CSS | anything the capture lacks (see its `provenance.json` gaps) |
+
+Rule of thumb: **styling and selector questions are answered at L3 only.** If L3 cannot answer one because the capture lacks that CSS, say so explicitly instead of substituting an L2 result.
+
+### The fixture contract (L3)
+
+The capture is paired with `test/fixtures/<name>.provenance.json`, and
+`test/fixture-contract.ts` machine-checks it against a declared contract (DOM
+anchors, design tokens, CSS features). `test/fixture-contract.test.ts` runs in CI,
+so a capture that no longer matches the script's selectors fails the build.
+`bun run fixture:check` prints the full report offline.
+
+**`intentionalGaps` must be honest.** A capture may lack a CSS feature (the
+2026-08-29 one has no syntax-colour palette and no rule consuming the code font
+token, because SingleFile dropped every external stylesheet). Declaring such a gap
+is allowed; *not* declaring it is a build failure, and declaring one that is
+actually present is also a failure. This is what stops a quietly-degraded capture
+from making the styling tests vacuously pass.
+
+### Mandatory first step for any DOM/UI change
+
+Before writing code for a selector, styling, or "the page looks wrong" issue:
+
+1. `bun run fixture:check` — is the capture still valid, and what does it lack?
+2. If it is stale, or if the issue touches something in its gaps (syntax colours,
+   banner/radius, theme variants, anything not in the capture's conversation):
+   **stop and ask the user to re-capture** with `bun run fixture:capture` (see
+   `test/fixtures/README.md` for the conversation it must contain).
+3. Only then reproduce, root-cause, and fix.
+
+Do not "work around" a missing capture by trusting L1/L2 for a styling claim, and
+do not relax the contract to make a stale capture pass.
+
+### Headless browser verification (L2)
 
 Run whenever rendering, host interaction, or CSS is touched. The harness is intentionally kept out of the repo (CI stays light); recreate it in a scratch dir:
 
@@ -69,11 +110,17 @@ sudo bunx playwright install-deps chromium   # once, for missing OS libraries
 
 The `verify.mjs` script must:
 
+- start with a header comment stating its scope: that it uses a stand-in fixture and therefore proves structure/events/DOM invariants, **not** real-page styling;
 - start a local HTTP server serving a fixture page that replicates the reported DeepSeek DOM (collapsible + flat + edit/cancel variants), loading marked / highlight.js / KaTeX from the same CDNs as `@require`;
 - stub `GM_addStyle` so it really injects a `<style>` element (a recording stub silently skips stylesheet-rule assertions) and `GM_getResourceText`;
 - inject the real userscript from `src/` and capture host node references BEFORE it runs;
 - assert: host nodes stay alive with original text, rendered output is correct (code block structure, KaTeX, highlighting), the host's measurement of its content is unchanged by our hiding, dedup does not double-render, simulated host commits (inserting children) do not crash, edit/cancel/theme/toggle flows work, and there are zero console errors / page errors;
 - exit non-zero on any failed check.
+
+Keep harness scripts that load the real capture (and their per-check assertions)
+working too, and **fix them when the DOM shape changes** — a harness still
+measuring the old element silently reports misleading numbers. Prefer running the
+styling checks against `test/fixtures/deepseek-chat.html` rather than a stand-in.
 
 ## Release & CI/CD coordination
 
