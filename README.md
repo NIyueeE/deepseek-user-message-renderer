@@ -30,17 +30,25 @@ editing, re-rendering, or the history-item highlight.
   styling; its `</>` icon adopts the native icon's geometry (same box, scale,
   stroke and colour) and its hint is a tooltip drawn from the page's own tooltip
   tokens rather than the browser's title box.
-  The raw source is rendered with DeepSeek's own design tokens and markdown
-  container class, in the page's normal text face rather than a monospace one:
-  DeepSeek's own raw bubble renders `pre-wrap` at 16px/24px, so a code font here
-  made the two views look like different products. It follows the light/dark
-  theme instead of looking bolted on.
+  The raw source is rendered the way DeepSeek renders any fenced block — a
+  native `md-code-block` with the language banner (`markdown`), the monospace
+  code face and the page's own Prism token colours — and rebuilt when the
+  light/dark theme changes, so the two views are unmistakable at a glance while
+  still looking native rather than bolted on. The source stays literal text:
+  highlight.js escapes it into the markup, never live HTML.
 - **LaTeX math** via KaTeX: `$...$`, `$$...$$`, `\(...\)`, `\[...\]`.
 - **Code blocks rebuilt into DeepSeek's official `md-code-block` structure**:
   banner with the language label, native light/dark theme, corner decorations,
-  and Prism-style token colors from the page's own stylesheet.
+  and Prism-style token colors from the page's own stylesheet. The structure is
+  built for every block, not only the ones highlight.js can colour, so a `text`
+  or `mermaid` fence still gets its native frame.
 - **Hard line breaks preserved** in code blocks; unknown languages (e.g.
   `mermaid`) stay as clean code blocks without console warnings.
+- **Scans that settle**: the observer only schedules a pass when a message
+  actually needs work (never rendered, text edited in place, or theme moved) or
+  when an assistant action bar / our own toggle appears. A raw view that is
+  already correct is never rebuilt, so an open view cannot loop through the
+  microtask queue and starve the page's timers.
 - **Safe editing**: clicking "edit" restores the original message before
   DeepSeek reads it, so the editor never crashes; cancel re-renders the
   message; empty edit placeholders are cleaned up.
@@ -113,8 +121,15 @@ bun run lint:fix  # auto-fix formatting and lint issues
   re-render, theme rebuild, and stale-height handling on expand.
 - [`test/assistant-raw.test.ts`](test/assistant-raw.test.ts): the assistant
   raw/rendered toggle — injection into the copy button's row, default rendered
-  state, lossless toggling, idempotency across scans, re-injection after a host
+  state, the native code-block frame of the raw view, lossless toggling,
+  idempotency across scans (including a regression guard proving an open view is
+  never rebuilt and page timers keep firing), re-injection after a host
   re-render, per-message independence, and user messages staying untouched.
+- [`test/code-block.test.ts`](test/code-block.test.ts): code blocks on a page
+  where highlight.js never loaded (the CDN `@require` failed) still get the
+  native frame, unknown/plain languages keep their source verbatim, the
+  light/dark variant follows the page's `data-ds-dark-theme` marker, and a theme
+  switch rebuilds the raw view instead of leaving a stale variant behind.
 - [`test/real-dom.test.ts`](test/real-dom.test.ts): integration tests against
   [`test/fixtures/deepseek-chat.html`](test/fixtures/deepseek-chat.html), a
   verbatim capture of a live chat page (real markup plus the page's own

@@ -2,7 +2,7 @@
 // @name         DeepSeek User Message Markdown Renderer
 // @name:zh-CN   DeepSeek 用户消息 Markdown 渲染器
 // @namespace    http://tampermonkey.net/
-// @version      1.2.1
+// @version      1.3.0
 // @description  Render your own messages on DeepSeek web with native-style Markdown, LaTeX math, and official code blocks; safe editing and history highlight included.
 // @description:zh-CN  让 DeepSeek 网页版中你自己发送的消息以原生样式渲染 Markdown、LaTeX 公式和官方风格代码块;支持安全编辑与历史消息高亮。
 // @author       NIyueeE
@@ -72,34 +72,49 @@
     // The toggle button and its active-state marker (see section 10); declared
     // here because the stylesheet below needs them
     const RAW_BUTTON_ATTR = "data-md-raw-toggle";
+    // Stamped on the raw-source container: the exact text that view was built
+    // from (the container's own textContent picks up highlight markup)
+    const RAW_SOURCE_TEXT_ATTR = "data-md-raw-text";
+    // Stamped on the raw-source container: the light/dark variant it was built
+    // for. The md-code-block wrapper is baked with the theme (see
+    // upgradeCodeBlock), so unlike the page's own blocks ours must be rebuilt to
+    // follow a theme switch.
+    const RAW_SOURCE_THEME_ATTR = "data-md-raw-theme";
     const RAW_ACTIVE_ATTR = "data-md-raw-active";
     try {
         GM_addStyle(
             `[${RAW_MODE_ATTR}] { display: none !important; }` +
-                // The raw source is styled from DeepSeek's OWN design tokens and
-                // reuses the native markdown container class (added in
-                // showRawSource), so it follows the light/dark theme without
-                // hardcoding any colour. The fallbacks only apply if a future
-                // build drops a token.
+                // The raw source is rendered as a native md-code-block (see
+                // showRawSource): the page's own rules then supply the banner,
+                // the corner decorations, the frame and the syntax token colours.
                 //
-                // It deliberately uses the body text face (--dsw-font-base-16),
-                // NOT the code face. DeepSeek's own raw text — the user bubble
-                // `.fbb737a4` — renders `white-space: pre-wrap` at 16px/24px in
-                // the page's normal font, so a monospace reading of the raw
-                // source was this script's invention and made the two views look
-                // like different products. Measured against the live stylesheet,
-                // the native bubble is 16px/24px in --dsw-font-family, which is
-                // exactly what --dsw-font-base-16 expands to.
-                `.${RAW_SOURCE_CLASS} {` +
-                " margin: 0; padding: 0; border: 0;" +
-                " font-family: var(--dsw-font-base-16-font-family, var(--dsw-font-family, inherit));" +
-                " font-size: var(--dsw-font-base-16-font-size, 16px);" +
-                " line-height: var(--dsw-font-base-16-line-height, 24px);" +
-                " font-weight: var(--dsw-font-base-16-font-weight, 400);" +
-                " font-style: var(--dsw-font-base-16-font-style, normal);" +
+                // Its CODE typography is set here as well, from the page's own
+                // code tokens. That is deliberate: the md-code-block rules that
+                // consume those tokens are not guaranteed to be present in every
+                // build (the captured stylesheet has the tokens but no such rule),
+                // and without them the raw view would silently fall back to the
+                // body face — the exact problem this view exists to avoid. The
+                // values are the page's, so this stays native rather than invented.
+                `.${RAW_SOURCE_CLASS} pre {` +
+                " margin: 0;" +
+                " font-family: var(--dsw-font-markdown-code-font-family, var(--ds-font-family-code, ui-monospace, Menlo, Consolas, monospace));" +
+                " font-size: var(--dsw-font-markdown-code-font-size, 14px);" +
+                " line-height: var(--dsw-font-markdown-code-line-height, 22px);" +
+                " font-weight: var(--dsw-font-markdown-code-font-weight, 400);" +
                 " color: var(--dsw-alias-label-primary, inherit);" +
-                " background-color: transparent;" +
+                " background-color: var(--dsw-alias-markdown-code-block, rgba(0, 0, 0, 0.04));" +
                 " white-space: pre-wrap; word-break: break-word; overflow-wrap: anywhere; }" +
+                // The wrapper is only an anchor for the view switch; the native
+                // md-code-block inside it owns the frame and its spacing
+                `.${RAW_SOURCE_CLASS} { margin: 0; padding: 0; background: transparent; }` +
+                // When the native frame could not be built at all (markup drift),
+                // draw a minimal one so the block still reads as a code block
+                `.${RAW_SOURCE_CLASS}-plain pre { padding: 12px 16px; border-radius: 8px; }` +
+                // The page styles inline `code` (background, padding, colour);
+                // the fallback keeps the element, so reset it there
+                `.${RAW_SOURCE_CLASS}-plain code {` +
+                " font: inherit; color: inherit; background: none; padding: 0; border: 0;" +
+                " white-space: inherit; }" +
                 // While the raw source is shown, tint the toggle the way an
                 // active native button is tinted. The host's own
                 // ds-button__background element paints it, so the indicator
@@ -547,6 +562,52 @@
         return match ? match[1] : "text";
     }
 
+    // The highlighted label language of a <pre><code class="language-x"> block,
+    // or null when the block must be left alone (its language is unknown to
+    // highlight.js — "text" included — or the markup is not a code block).
+    function highlightableLanguage(pre) {
+        const codeEl = pre.querySelector("code");
+        if (!codeEl) {
+            return null;
+        }
+        const language = codeLanguageOf(codeEl);
+        if (language === "text") {
+            return null;
+        }
+        if (typeof hljs !== "undefined" && typeof hljs.getLanguage === "function" && !hljs.getLanguage(language)) {
+            // Unknown language: highlightElement would warn and fall back to no
+            // highlighting anyway, and the banner would advertise a language the
+            // view does not actually colour
+            return null;
+        }
+        return language;
+    }
+
+    // Turn one <pre><code class="language-x"> block into DeepSeek's native
+    // md-code-block: highlight it (when possible), rebuild the banner, theme and
+    // corner decorations, and return the source code element (the node the raw
+    // mode marks). Used for both rendered Markdown code blocks and the assistant
+    // raw-source view, so the two can never drift apart.
+    function buildNativeCodeBlock(pre) {
+        if (!pre || pre.closest(".md-code-block")) {
+            return null;
+        }
+        const code = pre.querySelector("code");
+        if (!code) {
+            return null;
+        }
+        const language = highlightableLanguage(pre);
+        if (language != null && typeof hljs !== "undefined" && typeof hljs.highlightElement === "function") {
+            try {
+                hljs.highlightElement(code);
+            } catch (err) {
+                console.error("Highlight.js rendering failed", err);
+            }
+        }
+        upgradeCodeBlock(pre, language);
+        return pre.querySelector("code");
+    }
+
     function buildCornerSvg(doc, cornerClass) {
         const svg = doc.createElementNS(SVG_NS, "svg");
         svg.setAttribute("width", "12");
@@ -576,7 +637,7 @@
         return document.body?.classList.contains("dark") === true;
     }
 
-    function upgradeCodeBlock(pre) {
+    function upgradeCodeBlock(pre, language) {
         if (!pre || pre.closest(".md-code-block")) {
             return;
         }
@@ -585,7 +646,8 @@
         if (!code) {
             return;
         }
-        const language = codeLanguageOf(code);
+        // The caller resolved the banner language (null for unknown ones)
+        const lang = language || codeLanguageOf(code);
 
         // highlight.js put hljs-* classes on the code element and its spans;
         // DeepSeek's CSS styles `token *` classes instead, so rewrite them.
@@ -632,10 +694,10 @@
         header.className = CODE_BLOCK_CLASSES.header;
         const left = doc.createElement("div");
         left.className = CODE_BLOCK_CLASSES.side;
-        const label = doc.createElement("span");
-        label.className = CODE_BLOCK_CLASSES.label;
-        label.textContent = language;
-        left.appendChild(label);
+        const labelEl = doc.createElement("span");
+        labelEl.className = CODE_BLOCK_CLASSES.label;
+        labelEl.textContent = lang;
+        left.appendChild(labelEl);
         header.appendChild(left);
         banner.appendChild(header);
         bannerWrap.appendChild(banner);
@@ -643,7 +705,7 @@
 
         // The official CSS targets pre[class*=language-]; marked only puts the
         // language class on <code>
-        pre.classList.add(`language-${language}`);
+        pre.classList.add(`language-${lang}`);
         const cornerLeft = buildCornerSvg(doc, CODE_BLOCK_CLASSES.cornerLeft);
         const cornerRight = buildCornerSvg(doc, CODE_BLOCK_CLASSES.cornerRight);
         wrapper.append(bannerWrap, cornerLeft, cornerRight);
@@ -1095,31 +1157,13 @@
             }
         }
 
-        if (typeof hljs !== "undefined" && typeof hljs.highlightElement === "function") {
+        // Rebuild every code block into the native md-code-block structure. This
+        // must run for EVERY block, whether or not highlight.js knows its
+        // language: native blocks are structural (banner, theme variant, corner
+        // decorations), so an unhighlightable language still gets the frame.
+        container.querySelectorAll("pre").forEach((pre) => {
             try {
-                container.querySelectorAll("pre code").forEach((block) => {
-                    // Skip languages hljs does not know (e.g. mermaid, text):
-                    // highlightElement would log a console warning and fall back
-                    // to no highlighting anyway
-                    const langMatch = /language-([\w-]+)/.exec(block.className);
-                    if (langMatch) {
-                        const language = langMatch[1];
-                        if (language === "text" || !hljs.getLanguage(language)) {
-                            return;
-                        }
-                    }
-                    hljs.highlightElement(block);
-                });
-            } catch (err) {
-                console.error("Highlight.js rendering failed", err);
-            }
-        }
-
-        container.querySelectorAll("pre code").forEach((codeEl) => {
-            try {
-                if (codeEl.parentElement) {
-                    upgradeCodeBlock(codeEl.parentElement);
-                }
+                buildNativeCodeBlock(pre);
             } catch (err) {
                 console.error("Code block upgrade failed", err);
             }
@@ -1640,18 +1684,27 @@
         return message.querySelector(`.${RAW_SOURCE_CLASS}`);
     }
 
+    // Show the reply's raw Markdown as a NATIVE CODE BLOCK — monospace, syntax
+    // coloured, with the language banner — the same treatment DeepSeek gives any
+    // fenced block, here tagged as "markdown". That is what makes the two views
+    // unmistakably different at a glance (the whole point of the toggle) and it
+    // reuses the page's own code-block styling instead of inventing a look. The
+    // rendered pipeline and this one share buildNativeCodeBlock, so the two can
+    // never drift apart.
     function showRawSource(message, state) {
         if (!state.rawSource || !state.markdownEl?.isConnected) {
             return;
         }
-        const existing = findRawSourceEl(message);
         const markdownEl = state.markdownEl;
+        const themeKey = isDarkTheme() ? "dark" : "light";
+        const existing = findRawSourceEl(message);
         // Already in the desired state: do nothing. The scan runs after every
-        // relevant mutation, and re-creating the nodes here would mutate the DOM
+        // relevant mutation, so re-creating the nodes here would mutate the DOM
         // again and re-trigger the observer forever.
         if (
             existing?.previousElementSibling === markdownEl &&
-            existing.textContent === state.rawSource &&
+            existing.getAttribute(RAW_SOURCE_TEXT_ATTR) === state.rawSource &&
+            existing.getAttribute(RAW_SOURCE_THEME_ATTR) === themeKey &&
             markdownEl.getAttribute(RAW_MODE_ATTR) === "1"
         ) {
             state.raw = true;
@@ -1664,15 +1717,39 @@
         for (const el of message.querySelectorAll(`[${RAW_MODE_ATTR}]`)) {
             el.removeAttribute(RAW_MODE_ATTR);
         }
-        const pre = message.ownerDocument.createElement("pre");
-        // The native markdown container class is reused so the page's own
-        // markdown rules (typography, colour) apply to the raw source too
-        pre.className = `${RAW_SOURCE_CLASS} ds-markdown`;
-        pre.textContent = state.rawSource;
+        const doc = message.ownerDocument;
+        const container = doc.createElement("div");
+        // The native markdown container class is reused so the page's own rules
+        // (block spacing, theme colours) apply
+        container.className = `${RAW_SOURCE_CLASS} ds-markdown`;
+        const pre = doc.createElement("pre");
+        const code = doc.createElement("code");
+        code.className = "language-markdown";
+        code.textContent = state.rawSource;
+        pre.appendChild(code);
+        container.appendChild(pre);
+        // Remember the exact source this view was built from: the container's
+        // textContent includes the language banner and the highlight markup, so
+        // comparing that to the raw string would never match and the observer
+        // would rebuild the view forever. Stamped BEFORE the build so the
+        // observer can never catch a half-built view with no fingerprint.
+        container.setAttribute(RAW_SOURCE_TEXT_ATTR, state.rawSource);
+        container.setAttribute(RAW_SOURCE_THEME_ATTR, themeKey);
+        try {
+            buildNativeCodeBlock(pre);
+        } catch (err) {
+            console.error("Raw source code block build failed", err);
+        }
+        if (!container.querySelector(".md-code-block")) {
+            // The native frame could not be built (no <code> element, or a build
+            // whose markup moved): our own rules then supply a readable monospace
+            // <pre>, so the two views never look alike
+            container.classList.add(`${RAW_SOURCE_CLASS}-plain`);
+        }
         // Only the Markdown column is hidden, and the raw source is placed next
         // to it — the host's recorded nodes are never touched, moved, or
         // replaced, and the action bar stays usable
-        markdownEl.insertAdjacentElement("afterend", pre);
+        markdownEl.insertAdjacentElement("afterend", container);
         markdownEl.setAttribute(RAW_MODE_ATTR, "1");
         state.raw = true;
         syncRawToggleState(state);
@@ -1740,6 +1817,10 @@
         state.rawSource = raw;
         ensureRawToggleButton(message, actionRow);
         if (state.raw) {
+            // Cheap no-op when nothing changed: showRawSource keeps the existing
+            // view unless the source text or the theme moved, and rebuilds it
+            // after a host re-render or a theme switch (the code block's
+            // light/dark variant is baked in and cannot follow the theme alone).
             showRawSource(message, state);
         }
     }
@@ -2110,45 +2191,82 @@
         return belongsToAssistantItem(node);
     }
 
-    // Only relevant mutations should trigger a scan: anything inside a user
-    // message group, new groups (appended outside any existing group), theme
-    // changes (the body class), our own raw toggles, and assistant action bars.
-    // AI-streaming churn outside those areas is ignored, so the observer never
-    // scans the whole page per streamed token.
+    // True when a node is (or contains) a USER message that still needs work:
+    // never rendered, or its rendered output no longer matches its source (the
+    // host edited the text in place), or the theme moved. Only such a message can
+    // make a scan do anything, so only such a message may schedule one.
+    // Everything else — assistant streaming text, message-list scrolling — must
+    // not schedule one: with an unbounded queueMicrotask chain, a scan that keeps
+    // re-scheduling itself starves every timer and freezes the page.
+    function userItemNeedsRender(group) {
+        const textEl = group.querySelector(USER_TEXT_SELECTOR);
+        if (!textEl) {
+            return false;
+        }
+        const contentEl = resolveContentEl(textEl);
+        if (!contentEl) {
+            return false;
+        }
+        const renderedEl = contentEl === textEl ? textEl : findMarkdownContainer(contentEl);
+        if (!renderedEl) {
+            // Collapsible message whose rendered container was removed (an edit
+            // restore) but whose markers survive: it must be rebuilt
+            return true;
+        }
+        if (contentEl.dataset.mdRenderedText !== renderedEl.textContent.trim()) {
+            return true;
+        }
+        return contentEl.dataset.mdTheme !== (isDarkTheme() ? "dark" : "light");
+    }
+
+    function isPendingUserItem(node) {
+        if (node?.nodeType !== 1) {
+            return false;
+        }
+        const groups = [];
+        const closest = node.closest?.("._9663006");
+        if (closest) {
+            groups.push(closest);
+        }
+        for (const group of node.querySelectorAll?.("._9663006") ?? []) {
+            groups.push(group);
+        }
+        return groups.some(userItemNeedsRender);
+    }
+
+    // Only relevant mutations should trigger a scan: a user message that still
+    // needs rendering, the theme (document-element attribute or body class), our
+    // own raw toggles, and assistant action bars. AI-streaming churn outside
+    // those areas is ignored, so the observer never scans the whole page per
+    // streamed token.
     function isRelevantMutation(records) {
         for (const record of records) {
             if (record.type === "characterData") {
                 const parent = record.target.parentElement;
-                if (parent?.closest("._9663006") || parent === document.body) {
+                if (parent === document.body || isPendingUserItem(parent)) {
                     return true;
                 }
             } else if (record.type === "attributes") {
                 const target = record.target;
-                if (target === document.body || target.closest?.("._9663006")) {
+                if (target === document.body || isPendingUserItem(target)) {
                     return true;
                 }
             } else if (record.type === "childList") {
                 for (const node of [...record.addedNodes, ...record.removedNodes]) {
                     if (node.nodeType !== 1) {
-                        if (node.parentElement?.closest("._9663006")) {
+                        if (isPendingUserItem(node.parentElement)) {
                             return true;
                         }
                         continue;
                     }
-                    // closest() covers nodes inside a group and new groups
-                    // themselves; querySelector() covers wholesale list
-                    // re-renders whose root sits outside any group
-                    if (
-                        node.closest?.("._9663006") ||
-                        node.querySelector?.("._9663006") ||
-                        touchesRawToggle(node) ||
-                        touchesAssistantActionBar(node)
-                    ) {
+                    // querySelector covers wholesale list re-renders whose root
+                    // sits outside any group and new groups appended later
+                    if (isPendingUserItem(node) || touchesRawToggle(node) || touchesAssistantActionBar(node)) {
                         return true;
                     }
                 }
                 if (
-                    record.target.closest?.("._9663006") ||
+                    isPendingUserItem(record.target) ||
                     touchesRawToggle(record.target) ||
                     touchesAssistantActionBar(record.target)
                 ) {
@@ -2177,6 +2295,17 @@
             attributes: true,
             attributeFilter: ["class"],
         });
+
+        // Observe the theme attribute itself: the host swaps
+        // `data-ds-dark-theme` on the document element, which the body-class
+        // filter above cannot see, and our code blocks bake in the light/dark
+        // variant at build time.
+        if (document.documentElement) {
+            observer.observe(document.documentElement, {
+                attributes: true,
+                attributeFilter: ["data-ds-dark-theme"],
+            });
+        }
 
         processMessages();
     }

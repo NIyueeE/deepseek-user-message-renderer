@@ -51,7 +51,13 @@ function rawToggle(message: HTMLElement): HTMLElement | null {
     return item(message).querySelector("[data-md-raw-toggle]");
 }
 
+// The raw view is a native code block, so the SOURCE TEXT lives inside the
+// <pre>; the wrapper (which also carries the language banner) is the container
 function rawSource(message: HTMLElement): HTMLElement | null {
+    return rawContainer(message)?.querySelector("pre") ?? null;
+}
+
+function rawContainer(message: HTMLElement): HTMLElement | null {
     return item(message).querySelector(".md-raw-source");
 }
 
@@ -126,13 +132,20 @@ describe("assistant raw/rendered toggle", () => {
 
         const column = markdownColumn(assistant.message);
         expect(column.getAttribute("data-md-raw-mode")).toBe("1");
-        // The raw source is rendered verbatim, as text (never as HTML)
+        // The source is shown verbatim, as text (never as live HTML)
         const pre = rawSource(assistant.message);
         expect(pre?.textContent).toBe(raw);
-        expect(pre?.tagName).toBe("PRE");
-        // It carries the native markdown container class so the page's own
-        // typography and theme colours apply to it
-        expect(pre?.classList.contains("ds-markdown")).toBeTrue();
+        // …inside a native md-code-block, with the language banner and the
+        // page's own syntax token classes, exactly like a fenced block. This is
+        // what makes the two views unmistakably different at a glance.
+        const container = rawContainer(assistant.message);
+        expect(container?.classList.contains("ds-markdown")).toBeTrue();
+        expect(container?.querySelector(".md-code-block")).not.toBeNull();
+        expect(container?.querySelector(".d813de27")?.textContent).toBe("markdown");
+        expect(container?.querySelector("span.token")).not.toBeNull();
+        // The wrapper itself must NOT be a pre: a <pre> here would render the
+        // language banner and the source as one preformatted line of text.
+        expect(container?.tagName).toBe("DIV");
         expect(button.getAttribute("aria-pressed")).toBe("true");
         // The active state is exposed for the native-background tint
         expect(button.getAttribute("data-md-raw-active")).toBe("1");
@@ -172,8 +185,54 @@ describe("assistant raw/rendered toggle", () => {
         // Exactly one button and one raw-source block, even after re-scans
         expect(assistant.group.querySelectorAll("[data-md-raw-toggle]").length).toBe(1);
         expect(assistant.message.querySelectorAll(".md-raw-source").length).toBe(1);
-        expect(rawSource(assistant.message)?.previousElementSibling).toBe(markdownColumn(assistant.message));
+        // The raw view sits immediately after the rendered column, and the
+        // source <pre> is nested inside the wrapper (not a sibling of it)
+        expect(rawContainer(assistant.message)?.previousElementSibling).toBe(markdownColumn(assistant.message));
+        expect(rawContainer(assistant.message)?.contains(rawSource(assistant.message))).toBeTrue();
         expect(button.isConnected).toBeTrue();
+    });
+
+    test("rebuilds the raw view at most once, and never starves the timer queue", async () => {
+        // Regression: an open raw view used to rebuild itself on EVERY observer
+        // scan. Each rebuild is another DOM mutation, which schedules another
+        // scan (queueMicrotask), and that unbounded chain starves every timer
+        // and freezes the page. The view must survive repeated scans unchanged,
+        // and timers must keep firing while it is open.
+        const button = rawToggle(assistant.message) as HTMLElement;
+        if (button.getAttribute("aria-pressed") !== "true") {
+            clickOn(button);
+        }
+        await settle();
+        const first = rawContainer(assistant.message);
+
+        // Direct children of the list item: a rebuild REPLACES the raw container,
+        // which shows up here even if the identity check were to miss it. The
+        // action row is a descendant, so the host churn below does not count.
+        let childMutations = 0;
+        const observer = new env.window.MutationObserver((records) => {
+            childMutations += records.length;
+        });
+        observer.observe(item(assistant.message), { childList: true });
+
+        let timerTicks = 0;
+        const timer = setInterval(() => {
+            timerTicks += 1;
+        }, 5);
+        // Each removal is a mutation that triggers a scan (the button's own
+        // observer filter), so this drives many scans with the raw view open
+        for (let i = 0; i < 8; i++) {
+            rawToggle(assistant.message)?.remove();
+            await settle(15);
+        }
+        clearInterval(timer);
+        observer.disconnect();
+
+        expect(rawContainer(assistant.message)).toBe(first);
+        expect(assistant.message.querySelectorAll(".md-raw-source").length).toBe(1);
+        // A stable view is not replaced while scans run
+        expect(childMutations).toBe(0);
+        expect(rawToggle(assistant.message)).not.toBeNull();
+        expect(timerTicks).toBeGreaterThan(0);
     });
 
     test("re-injects the toggle when the host re-renders the action row", async () => {

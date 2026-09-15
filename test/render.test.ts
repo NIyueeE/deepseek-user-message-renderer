@@ -183,12 +183,16 @@ describe("user message Markdown rendering", () => {
         // Raw mode + raw source + active tint + tooltip
         expect(css).toContain("[data-md-raw-mode] { display: none !important; }");
         expect(css).toContain(".md-raw-source");
-        // The raw source uses the page's BODY text face, not a code face: the
-        // native raw bubble (.fbb737a4) renders pre-wrap at 16px in the normal
-        // font, so a monospace reading of the raw source was this script's own
-        // invention and made the two views look like different products.
-        expect(css).toMatch(/\.md-raw-source\s*\{[^}]*--dsw-font-base-16/);
-        expect(css).not.toMatch(/\.md-raw-source\s*\{[^}]*--ds-font-family-code/);
+        // The raw source is a native code block: monospace code face and code
+        // colours from the page's own tokens, never the body text face. The two
+        // views must be distinguishable at a glance — that is the whole point of
+        // the toggle — so this contract is asserted in both directions.
+        expect(css).toMatch(/\.md-raw-source pre\s*\{[^}]*--ds-font-family-code/);
+        expect(css).toMatch(/\.md-raw-source pre\s*\{[^}]*--dsw-font-markdown-code-font-size/);
+        expect(css).toMatch(/\.md-raw-source pre\s*\{[^}]*--dsw-alias-markdown-code-block/);
+        expect(css).not.toMatch(/\.md-raw-source pre\s*\{[^}]*--dsw-font-base-16/);
+        // The no-native-frame fallback still draws a code block
+        expect(css).toMatch(/\.md-raw-source-plain pre\s*\{[^}]*padding/);
         expect(css).toContain(".ds-button__background");
         expect(css).toContain("data-md-raw-tip");
         // KaTeX and highlight.js run on every rendered message

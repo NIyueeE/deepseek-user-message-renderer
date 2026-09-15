@@ -88,7 +88,7 @@ export function appendCollapsibleUserMessage(
  * the userscript depends on via globalThis. Must be called before loading the
  * userscript.
  */
-export function setupTampermonkeyEnv(): UserscriptEnv {
+export function setupTampermonkeyEnv(options?: { highlight?: boolean }): UserscriptEnv {
     const window = new Window({ url: "https://chat.deepseek.com/" });
     const g = globalThis as unknown as Record<string, unknown>;
 
@@ -117,13 +117,32 @@ export function setupTampermonkeyEnv(): UserscriptEnv {
 
     // KaTeX / highlight.js stubs that record calls for assertions
     const highlightCalls: HTMLElement[] = [];
-    g.hljs = {
-        highlightElement: (el: HTMLElement) => {
-            highlightCalls.push(el);
-        },
-        // Mirrors highlight.js: languages like "text" or "mermaid" are unknown
-        getLanguage: (name: string) => (["python", "javascript", "js", "bash"].includes(name) ? {} : undefined),
-    };
+    // `highlight: false` simulates a page where highlight.js never loaded (CDN
+    // blocked, @require failed): the code-block structure must still be built.
+    g.hljs =
+        options?.highlight === false
+            ? undefined
+            : {
+                  highlightElement: (el: HTMLElement) => {
+                      highlightCalls.push(el);
+                      // Emulate the real library: wrap the code in a hljs-* span so
+                      // the script's hljs -> Prism class rewriting is exercised.
+                      // Like the real highlight.js, the text is HTML-ESCAPED into
+                      // the markup — that is what keeps a raw source containing
+                      // tags from ever becoming live HTML.
+                      if (el.textContent && !el.querySelector("span")) {
+                          const escaped = el.textContent
+                              .replace(/&/g, "&amp;")
+                              .replace(/</g, "&lt;")
+                              .replace(/>/g, "&gt;");
+                          el.innerHTML = `<span class="hljs-keyword">${escaped}</span>`;
+                      }
+                  },
+                  // Mirrors highlight.js: languages like "text" or "mermaid" are
+                  // unknown and are left unhighlighted by the script
+                  getLanguage: (name: string) =>
+                      ["python", "javascript", "js", "bash", "markdown", "md"].includes(name) ? {} : undefined,
+              };
     const mathCalls: HTMLElement[] = [];
     g.renderMathInElement = (el: HTMLElement) => {
         mathCalls.push(el);

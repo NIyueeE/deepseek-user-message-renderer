@@ -120,13 +120,19 @@ describe("real DeepSeek DOM", () => {
         const toggle = env.document.querySelector("[data-md-raw-toggle]") as HTMLElement;
         toggle.dispatchEvent(new env.window.Event("click", { bubbles: true }));
 
-        const pre = env.document.querySelector(".md-raw-source");
+        // The raw view is a native code block: the source text is the <pre>'s
+        // text (the wrapper also carries the language banner, so its own
+        // textContent starts with "markdown")
+        const container = env.document.querySelector(".md-raw-source") as HTMLElement;
+        const pre = container?.querySelector("pre") as HTMLElement;
         expect(pre?.textContent).toBe(REPLY_TEXT);
+        expect(container?.querySelector(".md-code-block")).not.toBeNull();
+        expect(container?.querySelector(".d813de27")?.textContent).toBe("markdown");
         // The rendered column is hidden, and the raw source carries the native
         // markdown class so the page's own typography applies
         const column = env.document.querySelector("._4f9bf79 .ds-assistant-message-main-content");
         expect(column?.getAttribute("data-md-raw-mode")).toBe("1");
-        expect(pre?.classList.contains("ds-markdown")).toBeTrue();
+        expect(container?.classList.contains("ds-markdown")).toBeTrue();
 
         toggle.dispatchEvent(new env.window.Event("click", { bubbles: true }));
         await settle();
