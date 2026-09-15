@@ -27,9 +27,10 @@
   原生 `md-code-block` 结构 + 语言标签(`markdown`)+ 等宽代码字体 + 页面自带的
   Prism token 配色,并在明暗主题切换时重建,因此两种视图一眼可辨、又不显得外挂。
   原文始终是纯文本:highlight.js 会把它转义进标记里,绝不会变成可执行 HTML。
-  (横幅、外框与 token 配色来自页面自身的 `md-code-block` 规则,因此换一个使用不同
-  实现的构建时,这些样式也会随之变化;代码字体与代码块背景取自页面的 code token,
-  由脚本直接应用——因为并非每个抓取到的构建都有消费这些 token 的规则。)
+  (横幅、12px 圆角外框与其背景都来自页面自身的 `md-code-block` 规则,与原生代码块完全一致;
+  脚本只补上代码块的排版——取自页面自己的 code-block token(13px/22px,与行内代码的 14px 不同)。
+  另外,DeepSeek 的调色板只覆盖少数 token 类型,因此 `markdown` 块基本是单色的;
+  真正让 raw 视图一眼可辨的是等宽字体,而不是颜色。)
 - **LaTeX 公式**(KaTeX):`$...$`、`$$...$$`、`\(...\)`、`\[...\]`。
 - **代码块重建为 DeepSeek 官方 `md-code-block` 结构**:带语言标签的横幅、
   原生浅色/深色主题、角标装饰,以及页面自带样式表中的 Prism 风格 token 配色。
@@ -107,11 +108,29 @@ bun run lint:fix  # 自动修复格式和 lint 问题
   视图,而不会留下过期的明暗变体。
 - [`test/real-dom.test.ts`](test/real-dom.test.ts):针对
   [`test/fixtures/deepseek-chat.html`](test/fixtures/deepseek-chat.html) 的集成
-  测试——该文件是**真实聊天页面的原样抓取**(真实结构 + 页面自带样式表)。
-  手写夹具无法发现 DeepSeek 改名或改结构:它永远与测试作者写的选择器自洽。
-  因此这些测试用**页面的真实形态**校验脚本的选择器、用户消息结构、折叠容器与
-  助手操作栏;一旦 DeepSeek 改版,它们会失败并指出变动点。抓取保留了 DOM,
-  但不含 React 内部信息,因此助手正文的来源由形状与线上一致的合成 fiber 提供。
+  测试——该文件是**真实聊天页面的原样抓取**,而且**保住了页面自带的样式表**,
+  因此包含 DeepSeek 真实渲染出的代码块与语法配色。除了用**页面的真实形态**校验
+  脚本的选择器、用户消息结构、折叠容器与助手操作栏之外,它还会把**脚本构建的代码块
+  与同一页面上 DeepSeek 自己渲染的代码块逐项 diff**(结构、横幅、角标)。
+  手写夹具永远与测试作者写的选择器自洽,因此这里的失败会直接指出变动点。
+  抓取保留了 DOM,但不含 React 内部信息,助手正文的来源由形状与线上一致的合成 fiber 提供。
+- [`test/real-dom-bugcase.test.ts`](test/real-dom-bugcase.test.ts):把引用块回归
+  (`> test` + 空行 + `你好`)钉在第二份更早、恰好包含该场景的抓取上。
+- [`test/fixture-contract.test.ts`](test/fixture-contract.test.ts) 与
+  [`test/fixture-contract-probes.test.ts`](test/fixture-contract-probes.test.ts):
+  每份抓取都会按一份显式契约(DOM 锚点、设计 token、CSS 特性)做机器校验。
+  悄悄丢掉半个页面的抓取会让构建失败;声明了缺口但实际存在的,同样失败。
+  详见 [`test/fixtures/README.md`](test/fixtures/README.md)。
+
+### 夹具工具
+
+```bash
+bun run fixture:check     # 离线:每份抓取是否仍满足契约?
+bun run fixture:capture   # 从真实页面重新抓取(需要 Playwright)
+bun run fixture:parity    # 在真实浏览器里把我们的代码块与 DeepSeek 的做 diff
+```
+
+`fixture:check` 跑在 CI 里;另外两个需要 Playwright,手动运行。
 
 ## CI / 发布
 

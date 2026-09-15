@@ -188,11 +188,22 @@ describe("user message Markdown rendering", () => {
         // views must be distinguishable at a glance — that is the whole point of
         // the toggle — so this contract is asserted in both directions.
         expect(css).toMatch(/\.md-raw-source pre\s*\{[^}]*--ds-font-family-code/);
-        expect(css).toMatch(/\.md-raw-source pre\s*\{[^}]*--dsw-font-markdown-code-font-size/);
-        expect(css).toMatch(/\.md-raw-source pre\s*\{[^}]*--dsw-alias-markdown-code-block/);
+        // The CODE-BLOCK token, not the inline-code one. Measured against the
+        // 2026-09-15 capture: DeepSeek renders a fenced block at 13px/22px
+        // (--dsw-font-markdown-code-block) and inline code at 14px/22px
+        // (--dsw-font-markdown-code). Using the inline token made the raw view
+        // 1px larger than a real code block.
+        expect(css).toMatch(/\.md-raw-source pre\s*\{[^}]*--dsw-font-markdown-code-block-font-size/);
+        expect(css).not.toMatch(/\.md-raw-source pre\s*\{[^}]*--dsw-font-markdown-code-font-size/);
         expect(css).not.toMatch(/\.md-raw-source pre\s*\{[^}]*--dsw-font-base-16/);
-        // The no-native-frame fallback still draws a code block
+        // The native <pre> is transparent and the FRAME owns the background
+        // (`.md-code-block` -> --dsw-alias-markdown-code-block-banner). Painting
+        // one on the <pre> as well put a second background over the frame.
+        expect(css).toMatch(/\.md-raw-source pre\s*\{[^}]*white-space:\s*pre-wrap/);
+        expect(css).not.toMatch(/\.md-raw-source pre\s*\{[^}]*background-color/);
+        // The no-native-frame fallback still draws a code block, background included
         expect(css).toMatch(/\.md-raw-source-plain pre\s*\{[^}]*padding/);
+        expect(css).toMatch(/\.md-raw-source-plain pre\s*\{[^}]*background-color/);
         expect(css).toContain(".ds-button__background");
         expect(css).toContain("data-md-raw-tip");
         // KaTeX and highlight.js run on every rendered message

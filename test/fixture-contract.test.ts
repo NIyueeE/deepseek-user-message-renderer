@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { Window } from "happy-dom";
 import { auditFixture, CONTRACT_GAPS, parseProvenance } from "./fixture-contract";
@@ -14,9 +14,12 @@ import { auditFixture, CONTRACT_GAPS, parseProvenance } from "./fixture-contract
  * quietly losing half the page (external stylesheets dropped, a section not
  * saved) is to assert what the capture must contain.
  *
+ * Every `*.html` in test/fixtures/ that has a `*.provenance.json` sidecar is
+ * audited, so adding a capture is all it takes to bring it under the contract.
+ *
  * When this fails:
  *   1. re-capture from the live page (see test/fixtures/README.md),
- *   2. re-run this test,
+ *   2. re-run `bun run fixture:check`,
  *   3. only then continue the change you were making.
  *
  * Do NOT relax the contract to make a stale capture pass. If a required anchor
@@ -24,67 +27,81 @@ import { auditFixture, CONTRACT_GAPS, parseProvenance } from "./fixture-contract
  * a selector in src/ needs updating, which is the whole point.
  */
 
-const FIXTURE = join(import.meta.dir, "fixtures", "deepseek-chat.html");
-const PROVENANCE = join(import.meta.dir, "fixtures", "deepseek-chat.provenance.json");
+const FIXTURE_DIR = join(import.meta.dir, "fixtures");
 
-const html = readFileSync(FIXTURE, "utf-8");
-const provenance = parseProvenance(
-    (() => {
+interface LoadedFixture {
+    name: string;
+    audit: ReturnType<typeof auditFixture>;
+}
+
+function loadFixtures(): LoadedFixture[] {
+    const files = readdirSync(FIXTURE_DIR).filter((f) => f.endsWith(".html"));
+    return files.map((file) => {
+        const name = file.replace(/\.html$/, "");
+        const html = readFileSync(join(FIXTURE_DIR, file), "utf-8");
+        let provenanceRaw: string | null = null;
         try {
-            return readFileSync(PROVENANCE, "utf-8");
+            provenanceRaw = readFileSync(join(FIXTURE_DIR, `${name}.provenance.json`), "utf-8");
         } catch {
-            return null;
+            provenanceRaw = null;
         }
-    })(),
-);
+        // Parse with happy-dom so the assertion uses the SAME engine as the tests.
+        const window = new Window();
+        window.document.write(html);
+        const audit = auditFixture({
+            html,
+            provenance: parseProvenance(provenanceRaw),
+            count: (selector) => window.document.querySelectorAll(selector).length,
+        });
+        return { name, audit };
+    });
+}
 
-// Parse with happy-dom so the assertion uses the SAME engine the tests do.
-const window = new Window();
-window.document.write(html);
-const audit = auditFixture({
-    html,
-    provenance,
-    count: (selector) => window.document.querySelectorAll(selector).length,
-});
+const fixtures = loadFixtures();
 
 describe("captured fixture contract", () => {
-    test("the capture carries every DOM anchor the script targets", () => {
-        const missing = audit.failures.filter((f) => f.key in audit.domPresent);
-        expect(missing.map((f) => f.detail)).toEqual([]);
+    test("there is at least one real capture under contract", () => {
+        expect(fixtures.length).toBeGreaterThanOrEqual(1);
     });
 
-    test("the capture carries every design token the script reads", () => {
-        const missing = audit.failures.filter((f) => f.key.startsWith("--"));
-        expect(missing.map((f) => f.detail)).toEqual([]);
-    });
+    for (const { name, audit } of fixtures) {
+        describe(name, () => {
+            test("a provenance sidecar exists and names its source", () => {
+                expect(audit.provenance).not.toBeNull();
+                expect(audit.provenance?.source).toBeTruthy();
+                expect(audit.provenance?.capturedAt).toMatch(/^\d{4}-\d{2}-\d{2}/);
+            });
 
-    test("the capture still looks like a DeepSeek chat page", () => {
-        expect(audit.counts.domAnchors).toBeGreaterThanOrEqual(5);
-        expect(audit.counts.cssRules).toBeGreaterThan(100);
-    });
+            test("carries every DOM anchor the script targets", () => {
+                const missing = audit.failures.filter((f) => f.key in audit.domPresent);
+                expect(missing.map((f) => f.detail)).toEqual([]);
+            });
 
-    test("no undeclared stylistic gaps", () => {
-        // A CSS feature may be absent only when the provenance declares it; the
-        // audit already fails on missing-and-undeclared, so this pins the intent.
-        const cssFailures = audit.failures.filter((f) => f.key in audit.cssPresent);
-        expect(cssFailures.map((f) => f.detail)).toEqual([]);
-        // And every declared gap really is absent (checked again below).
-        for (const gap of audit.gaps) {
-            expect(CONTRACT_GAPS[gap.key]).toBeDefined();
-        }
-    });
+            test("carries every design token the script reads", () => {
+                const missing = audit.failures.filter((f) => f.key.startsWith("--"));
+                expect(missing.map((f) => f.detail)).toEqual([]);
+            });
 
-    test("declared gaps match reality (no stale declarations)", () => {
-        expect(audit.staleGaps.map((f) => f.detail)).toEqual([]);
-    });
+            test("still looks like a DeepSeek chat page", () => {
+                expect(audit.counts.domAnchors).toBeGreaterThanOrEqual(5);
+                expect(audit.counts.cssRules).toBeGreaterThan(100);
+            });
 
-    test("a provenance sidecar exists and names its source", () => {
-        expect(provenance).not.toBeNull();
-        expect(provenance?.source).toBeTruthy();
-        expect(provenance?.capturedAt).toMatch(/^\d{4}-\d{2}-\d{2}/);
-    });
+            test("no undeclared stylistic gaps", () => {
+                const missing = audit.failures.filter((f) => f.key in audit.cssPresent);
+                expect(missing.map((f) => f.detail)).toEqual([]);
+                for (const gap of audit.gaps) {
+                    expect(CONTRACT_GAPS[gap.key]).toBeDefined();
+                }
+            });
 
-    test("no contract failures of any kind", () => {
-        expect(audit.failures.map((f) => f.detail)).toEqual([]);
-    });
+            test("declared gaps match reality (no stale declarations)", () => {
+                expect(audit.staleGaps.map((f) => f.detail)).toEqual([]);
+            });
+
+            test("no contract failures of any kind", () => {
+                expect(audit.failures.map((f) => f.detail)).toEqual([]);
+            });
+        });
+    }
 });

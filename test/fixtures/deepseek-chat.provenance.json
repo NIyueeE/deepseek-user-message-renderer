@@ -1,17 +1,14 @@
 {
-    "source": "https://chat.deepseek.com/ (live chat page, SingleFile save)",
-    "capturedAt": "2026-08-29",
+    "source": "https://chat.deepseek.com/a/chat/s/2c466364-cbe6-498f-9aa5-27a33a94abfd",
+    "capturedAt": "2026-09-15",
     "theme": "light",
-    "method": "SingleFile save of a live conversation; sidebar/header chrome, the avatar data URI and the four @font-face blocks were dropped. The page's own inlined stylesheet and the message-list subtree are kept verbatim.",
+    "method": "SingleFile save of a live conversation, supplied by the maintainer. Unlike the 2026-08-29 capture this one KEEPS the external stylesheets: 36 <style> blocks, ~512 KB of CSS, including the real syntax-highlight palette and the code-block frame rules.",
     "intentionalGaps": [
-        "syntax-token-palette",
-        "code-typography-consumed",
         "dark-theme-capture"
     ],
-    "knownDeficiencies": [
-        "External stylesheets are absent: the <head> has no <link> and the CSS has no @import, so any vendor stylesheet (the syntax-highlighting theme most likely lives there) never made it into the capture. The inlined <style> is the app's own CSS-in-JS only.",
-        "No rendered code block exists anywhere in the captured DOM (zero ``` fences, zero <pre>), so code-block rebuilds and their colours cannot be validated against this capture.",
-        "Message content is minimal (short prose only): no LaTeX, tables, lists, images, blockquotes or long/collapsible messages.",
-        "Only the light theme is captured."
+    "notes": [
+        "Contains 17 rendered md-code-block wrappers, of which 2 hold a real <pre> with 34 real token spans (javascript and python). This is the first capture that can validate the rebuilt code-block structure and its token colours.",
+        "The second assistant reply (the mermaid diagram) has NO action row at all in the capture: DeepSeek mounts the message action bar lazily (on hover / when the message is settled) and that message was the last one. The script's observer rule for action bars is what injects its toggle once the bar appears, so this is faithful rather than a defect - but it means raw-toggle assertions can only cover the replies that do have a bar.",
+        "The mermaid reply renders to inline <svg class=\"flowchart mermaid-svg\">, not to a <pre>: that is what DeepSeek does with mermaid, and it is why the script must not treat a mermaid fence as a code block."
     ]
 }

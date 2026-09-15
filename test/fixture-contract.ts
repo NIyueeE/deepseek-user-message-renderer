@@ -94,6 +94,12 @@ export const TOKEN_CONTRACT: string[] = [
 ];
 
 /**
+ * Token kinds that only style `:before` whitespace markers. Rules for these are
+ * NOT a syntax palette — see the `syntax-token-palette` probe.
+ */
+const WHITESPACE_MARKERS = new Set(["lf", "cr", "space", "tab"]);
+
+/**
  * CSS features the script relies on. Each probe returns true when the page's own
  * stylesheet can render that feature, so a capture missing it cannot validate
  * the corresponding behaviour.
@@ -120,19 +126,47 @@ export const CSS_CONTRACT: Record<string, { probe: (css: string) => boolean; des
         describe: ".ds-button rules (geometry and hover)",
     },
     "syntax-token-palette": {
-        // Rules that give a `token` element an actual colour. Without these the
-        // highlighted output cannot be checked visually at all.
+        // A rule that colours a CONTENT token (keyword, string, function, …).
+        //
+        // Deliberately strict, in three ways that each matter:
+        //   * `.token.<name>` — a bare `token` class is not a palette; the
+        //     selector must name the token kind.
+        //   * not a whitespace marker (`lf`/`cr`/`space`/`tab`) — those rules
+        //     only colour `:before` content, so they look like a palette in a
+        //     grep while colouring nothing a reader sees.
+        //   * `[^{}:]*` up to the brace — excludes `:before`/`:after` variants
+        //     and anything else with a pseudo-element.
+        //
+        // The 2026-08-29 capture had only the whitespace-marker rules, and a
+        // laxer probe would have declared it a palette and quietly claimed the
+        // syntax colours were verified.
         probe: (css) => {
-            const rules = css.match(/[^{}]+\{[^{}]*\}/g) ?? [];
-            return rules.some((rule) => /\.token/.test(rule.split("{")[0] ?? "") && /(^|;|\s)color\s*:/.test(rule));
+            const re = /\.token\.([\w-]+)[^{}:]*\{([^{}]*)\}/g;
+            let m = re.exec(css);
+            while (m !== null) {
+                const name = m[1] ?? "";
+                const body = m[2] ?? "";
+                if (!WHITESPACE_MARKERS.has(name) && /(^|;|\s)color\s*:/.test(body)) {
+                    return true;
+                }
+                m = re.exec(css);
+            }
+            return false;
         },
         describe: "rules that colour .token elements",
     },
     "code-typography-consumed": {
-        // A rule that consumes the code font token, i.e. actually applies the
-        // monospace face to code. The script sets it itself, but a capture
-        // without it cannot confirm the native page does the same.
-        probe: (css) => /var\(\s*--(dsw-)?font(-family)?-?[a-z-]*code[a-z-]*\s*\)/.test(css),
+        // A rule that actually APPLIES a code font token to something.
+        //
+        // Two traps, both of which produced a wrong answer here:
+        //   * the token is `--ds-font-family-code` as well as the
+        //     `--dsw-font-markdown-code*` family, so a probe keyed to the
+        //     `--dsw-` prefix alone only passed by accident;
+        //   * a token DEFINITION whose value is another token
+        //     (`--dsw-font-markdown-code-font-family:var(--ds-font-family-code)`)
+        //     looks exactly like a consumer. The `(?<!-)` keeps the match off
+        //     custom-property declarations, which are always preceded by `-`.
+        probe: (css) => /(?<!-)font[a-z-]*\s*:\s*[^;}]*var\(\s*--[a-z0-9-]*code[a-z0-9-]*\s*\)/.test(css),
         describe: "a rule consuming the code font token",
     },
 };

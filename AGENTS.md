@@ -63,17 +63,20 @@ There are three layers. **A result from one layer must never be reported as if i
 | --- | --- | --- | --- |
 | **L1 — unit** (`bun test`, `test/env.ts`) | hand-written minimal DOM in happy-dom | selectors, parsing, dedup, edit/collapse state machines, HTML safety | real markup shape, any CSS |
 | **L2 — stand-in browser** (scratch `verify.mjs`) | a page the harness author wrote, with its own tokens and button CSS | structure, events, DOM invariants, measurement, timing (freezes/starvation) | **real-page styling** — its CSS is invented |
-| **L3 — real capture** (`test/fixtures/deepseek-chat.html` + its stylesheet) | verbatim SingleFile capture of the live page | real selector drift, real computed styles, real `md-code-block` / button / markdown CSS | anything the capture lacks (see its `provenance.json` gaps) |
+| **L3 — real capture** (`test/fixtures/`) | verbatim captures of the live page, one of them with the page's own stylesheets | real selector drift, real computed styles, real `md-code-block` / button / markdown CSS | anything the capture lacks (see each `provenance.json`) |
 
 Rule of thumb: **styling and selector questions are answered at L3 only.** If L3 cannot answer one because the capture lacks that CSS, say so explicitly instead of substituting an L2 result.
 
 ### The fixture contract (L3)
 
-The capture is paired with `test/fixtures/<name>.provenance.json`, and
+Each capture is paired with `test/fixtures/<name>.provenance.json`, and
 `test/fixture-contract.ts` machine-checks it against a declared contract (DOM
 anchors, design tokens, CSS features). `test/fixture-contract.test.ts` runs in CI,
 so a capture that no longer matches the script's selectors fails the build.
 `bun run fixture:check` prints the full report offline.
+`test/fixture-contract-probes.test.ts` unit-tests the probes themselves — they
+decide whether a capture "has" a feature, and two bugs in them once declared a
+degraded capture complete.
 
 **`intentionalGaps` must be honest.** A capture may lack a CSS feature (the
 2026-08-29 one has no syntax-colour palette and no rule consuming the code font
@@ -81,6 +84,16 @@ token, because SingleFile dropped every external stylesheet). Declaring such a g
 is allowed; *not* declaring it is a build failure, and declaring one that is
 actually present is also a failure. This is what stops a quietly-degraded capture
 from making the styling tests vacuously pass.
+
+### Styling parity (L3, needs a browser)
+
+`bun run fixture:parity` renders a fence through the script on the captured page
+and diffs the block it builds against one **DeepSeek itself rendered** in that
+capture: structure, frame (radius/margin/background), typography, and computed
+token colours for every kind both share. It needs Playwright, so it is not part
+of `bun test`; run it whenever rendering, CSS or code-block structure changes.
+It is the only check that can answer a styling question — quote its output, not
+an L2 result.
 
 ### Mandatory first step for any DOM/UI change
 

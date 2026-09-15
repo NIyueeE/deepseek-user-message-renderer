@@ -1,0 +1,17 @@
+{
+    "source": "https://chat.deepseek.com/ (live chat page, SingleFile save)",
+    "capturedAt": "2026-08-29",
+    "theme": "light",
+    "method": "SingleFile save of a live conversation; sidebar/header chrome, the avatar data URI and the four @font-face blocks were dropped. The page's own inlined stylesheet and the message-list subtree are kept verbatim.",
+    "intentionalGaps": [
+        "syntax-token-palette",
+        "code-typography-consumed",
+        "dark-theme-capture"
+    ],
+    "knownDeficiencies": [
+        "External stylesheets are absent: the <head> has no <link> and the CSS has no @import, so any vendor stylesheet (the syntax-highlighting theme most likely lives there) never made it into the capture. The inlined <style> is the app's own CSS-in-JS only.",
+        "No rendered code block exists anywhere in the captured DOM (zero ``` fences, zero <pre>), so code-block rebuilds and their colours cannot be validated against this capture.",
+        "Message content is minimal (short prose only): no LaTeX, tables, lists, images, blockquotes or long/collapsible messages.",
+        "Only the light theme is captured."
+    ]
+}

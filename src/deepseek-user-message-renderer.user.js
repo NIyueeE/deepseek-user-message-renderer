@@ -2,7 +2,7 @@
 // @name         DeepSeek User Message Markdown Renderer
 // @name:zh-CN   DeepSeek 用户消息 Markdown 渲染器
 // @namespace    http://tampermonkey.net/
-// @version      1.3.0
+// @version      1.3.1
 // @description  Render your own messages on DeepSeek web with native-style Markdown, LaTeX math, and official code blocks; safe editing and history highlight included.
 // @description:zh-CN  让 DeepSeek 网页版中你自己发送的消息以原生样式渲染 Markdown、LaTeX 公式和官方风格代码块;支持安全编辑与历史消息高亮。
 // @author       NIyueeE
@@ -85,31 +85,36 @@
         GM_addStyle(
             `[${RAW_MODE_ATTR}] { display: none !important; }` +
                 // The raw source is rendered as a native md-code-block (see
-                // showRawSource): the page's own rules then supply the banner,
-                // the corner decorations, the frame and the syntax token colours.
+                // showRawSource): the page's own rules supply the frame, its
+                // 12px radius, the banner, the corner decorations and the syntax
+                // token colours. Measured against the 2026-09-15 capture, the
+                // native block puts its background on the FRAME
+                // (`.md-code-block` -> --dsw-alias-markdown-code-block-banner)
+                // and leaves the <pre> transparent, so the raw view must too.
                 //
-                // Its CODE typography is set here as well, from the page's own
-                // code tokens. That is deliberate: the md-code-block rules that
-                // consume those tokens are not guaranteed to be present in every
-                // build (the captured stylesheet has the tokens but no such rule),
-                // and without them the raw view would silently fall back to the
-                // body face — the exact problem this view exists to avoid. The
-                // values are the page's, so this stays native rather than invented.
+                // The CODE typography is set here as well, from the page's own
+                // code-block tokens rather than the inline-code ones: DeepSeek
+                // renders a block at --dsw-font-markdown-code-block (13px/22px)
+                // and inline code at --dsw-font-markdown-code (14px/22px). Using
+                // the inline token made the raw view 1px larger than a real code
+                // block. The values are still the page's, so this stays native.
                 `.${RAW_SOURCE_CLASS} pre {` +
                 " margin: 0;" +
-                " font-family: var(--dsw-font-markdown-code-font-family, var(--ds-font-family-code, ui-monospace, Menlo, Consolas, monospace));" +
-                " font-size: var(--dsw-font-markdown-code-font-size, 14px);" +
-                " line-height: var(--dsw-font-markdown-code-line-height, 22px);" +
-                " font-weight: var(--dsw-font-markdown-code-font-weight, 400);" +
+                " font-family: var(--dsw-font-markdown-code-block-font-family, var(--ds-font-family-code, ui-monospace, Menlo, Consolas, monospace));" +
+                " font-size: var(--dsw-font-markdown-code-block-font-size, 13px);" +
+                " line-height: var(--dsw-font-markdown-code-block-line-height, 22px);" +
+                " font-weight: var(--dsw-font-markdown-code-block-font-weight, 400);" +
                 " color: var(--dsw-alias-label-primary, inherit);" +
-                " background-color: var(--dsw-alias-markdown-code-block, rgba(0, 0, 0, 0.04));" +
                 " white-space: pre-wrap; word-break: break-word; overflow-wrap: anywhere; }" +
                 // The wrapper is only an anchor for the view switch; the native
-                // md-code-block inside it owns the frame and its spacing
+                // md-code-block inside it owns the frame, its background and its
+                // spacing. No background here, or it would paint over the frame.
                 `.${RAW_SOURCE_CLASS} { margin: 0; padding: 0; background: transparent; }` +
                 // When the native frame could not be built at all (markup drift),
                 // draw a minimal one so the block still reads as a code block
-                `.${RAW_SOURCE_CLASS}-plain pre { padding: 12px 16px; border-radius: 8px; }` +
+                `.${RAW_SOURCE_CLASS}-plain pre {` +
+                " padding: 12px 16px; border-radius: 8px;" +
+                " background-color: var(--dsw-alias-markdown-code-block-banner, rgba(0, 0, 0, 0.04)); }" +
                 // The page styles inline `code` (background, padding, colour);
                 // the fallback keeps the element, so reset it there
                 `.${RAW_SOURCE_CLASS}-plain code {` +

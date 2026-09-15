@@ -36,10 +36,12 @@ editing, re-rendering, or the history-item highlight.
   light/dark theme changes, so the two views are unmistakable at a glance while
   still looking native rather than bolted on. The source stays literal text:
   highlight.js escapes it into the markup, never live HTML.
-  (The banner, frame and token colours come from the page's own `md-code-block`
-  rules, so a build that ships them differently will restyle this view too; the
-  code face and code background come from the page's code tokens, which the
-  script applies itself because not every captured build consumes them.)
+  (The banner, the 12px frame and its background come from the page's own
+  `md-code-block` rules, exactly as for a native block. The script supplies only
+  the code-block typography — the page's own code-block tokens, 13px/22px, which
+  differ from the 14px inline-code face. Note that DeepSeek's palette colours
+  only a few token kinds, so a `markdown` block is largely monochrome; the
+  monospace face, not colour, is what makes the raw view distinct.)
 - **LaTeX math** via KaTeX: `$...$`, `$$...$$`, `\(...\)`, `\[...\]`.
 - **Code blocks rebuilt into DeepSeek's official `md-code-block` structure**:
   banner with the language label, native light/dark theme, corner decorations,
@@ -136,14 +138,35 @@ bun run lint:fix  # auto-fix formatting and lint issues
   switch rebuilds the raw view instead of leaving a stale variant behind.
 - [`test/real-dom.test.ts`](test/real-dom.test.ts): integration tests against
   [`test/fixtures/deepseek-chat.html`](test/fixtures/deepseek-chat.html), a
-  verbatim capture of a live chat page (real markup plus the page's own
-  stylesheet). Hand-written fixtures cannot notice that DeepSeek renamed or
-  restructured something — they always agree with the selectors the test author
-  wrote — so these tests assert the script's selectors, the user-message shape,
-  the collapsible wrapper and the assistant action bar against the page as it
-  actually is. If DeepSeek ships a new UI they fail and point at what moved.
+  verbatim capture of a live chat page that **kept the page's own stylesheets** —
+  so it contains DeepSeek's real rendered code blocks and syntax palette. Besides
+  asserting the script's selectors, the user-message shape, the collapsible
+  wrapper and the assistant action bar against the page as it actually is, it
+  **diffs the code block the script builds against one DeepSeek itself rendered**
+  on that same page (structure, banner, corners). Hand-written fixtures cannot
+  notice that DeepSeek renamed or restructured something — they always agree with
+  the selectors the test author wrote — so a failure here points at what moved.
   The capture keeps the DOM but not React's internals, so the assistant reply's
   source is supplied by a synthetic fibre shaped like the live one.
+- [`test/real-dom-bugcase.test.ts`](test/real-dom-bugcase.test.ts): the
+  blockquote regression (`> test` + blank line + `你好`) pinned against a second,
+  older capture whose conversation contains it.
+- [`test/fixture-contract.test.ts`](test/fixture-contract.test.ts) and
+  [`test/fixture-contract-probes.test.ts`](test/fixture-contract-probes.test.ts):
+  every capture is machine-checked against a declared contract (DOM anchors,
+  design tokens, CSS features). A capture that quietly lost half the page fails
+  the build; so does a gap that was declared but is actually present. See
+  [`test/fixtures/README.md`](test/fixtures/README.md).
+
+### Fixture tooling
+
+```bash
+bun run fixture:check     # offline: does each capture still satisfy the contract?
+bun run fixture:capture   # re-capture from the live page (needs Playwright)
+bun run fixture:parity    # diff our code block against DeepSeek's, in a browser
+```
+
+`fixture:check` runs in CI; the other two need Playwright and are run by hand.
 
 ## CI / Release
 
