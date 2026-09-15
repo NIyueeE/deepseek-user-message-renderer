@@ -183,6 +183,12 @@ describe("user message Markdown rendering", () => {
         // Raw mode + raw source + active tint + tooltip
         expect(css).toContain("[data-md-raw-mode] { display: none !important; }");
         expect(css).toContain(".md-raw-source");
+        // The raw source uses the page's BODY text face, not a code face: the
+        // native raw bubble (.fbb737a4) renders pre-wrap at 16px in the normal
+        // font, so a monospace reading of the raw source was this script's own
+        // invention and made the two views look like different products.
+        expect(css).toMatch(/\.md-raw-source\s*\{[^}]*--dsw-font-base-16/);
+        expect(css).not.toMatch(/\.md-raw-source\s*\{[^}]*--ds-font-family-code/);
         expect(css).toContain(".ds-button__background");
         expect(css).toContain("data-md-raw-tip");
         // KaTeX and highlight.js run on every rendered message

@@ -2,7 +2,7 @@
 // @name         DeepSeek User Message Markdown Renderer
 // @name:zh-CN   DeepSeek 用户消息 Markdown 渲染器
 // @namespace    http://tampermonkey.net/
-// @version      1.2.0
+// @version      1.2.1
 // @description  Render your own messages on DeepSeek web with native-style Markdown, LaTeX math, and official code blocks; safe editing and history highlight included.
 // @description:zh-CN  让 DeepSeek 网页版中你自己发送的消息以原生样式渲染 Markdown、LaTeX 公式和官方风格代码块;支持安全编辑与历史消息高亮。
 // @author       NIyueeE
@@ -78,15 +78,25 @@
             `[${RAW_MODE_ATTR}] { display: none !important; }` +
                 // The raw source is styled from DeepSeek's OWN design tokens and
                 // reuses the native markdown container class (added in
-                // showRawSource), so it inherits the page's typography and
-                // follows the light/dark theme without hardcoding any colour.
-                // The fallbacks only apply if a future build drops a token.
+                // showRawSource), so it follows the light/dark theme without
+                // hardcoding any colour. The fallbacks only apply if a future
+                // build drops a token.
+                //
+                // It deliberately uses the body text face (--dsw-font-base-16),
+                // NOT the code face. DeepSeek's own raw text — the user bubble
+                // `.fbb737a4` — renders `white-space: pre-wrap` at 16px/24px in
+                // the page's normal font, so a monospace reading of the raw
+                // source was this script's invention and made the two views look
+                // like different products. Measured against the live stylesheet,
+                // the native bubble is 16px/24px in --dsw-font-family, which is
+                // exactly what --dsw-font-base-16 expands to.
                 `.${RAW_SOURCE_CLASS} {` +
                 " margin: 0; padding: 0; border: 0;" +
-                " font-family: var(--ds-font-family-code, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);" +
-                " font-size: var(--dsw-font-markdown-code-font-size, 14px);" +
-                " line-height: var(--dsw-font-markdown-code-line-height, 22px);" +
-                " font-weight: var(--dsw-font-markdown-code-font-weight, 400);" +
+                " font-family: var(--dsw-font-base-16-font-family, var(--dsw-font-family, inherit));" +
+                " font-size: var(--dsw-font-base-16-font-size, 16px);" +
+                " line-height: var(--dsw-font-base-16-line-height, 24px);" +
+                " font-weight: var(--dsw-font-base-16-font-weight, 400);" +
+                " font-style: var(--dsw-font-base-16-font-style, normal);" +
                 " color: var(--dsw-alias-label-primary, inherit);" +
                 " background-color: transparent;" +
                 " white-space: pre-wrap; word-break: break-word; overflow-wrap: anywhere; }" +

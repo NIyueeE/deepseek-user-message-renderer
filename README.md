@@ -31,8 +31,10 @@ editing, re-rendering, or the history-item highlight.
   stroke and colour) and its hint is a tooltip drawn from the page's own tooltip
   tokens rather than the browser's title box.
   The raw source is rendered with DeepSeek's own design tokens and markdown
-  container class — so it matches the native typography and follows the
-  light/dark theme instead of looking bolted on.
+  container class, in the page's normal text face rather than a monospace one:
+  DeepSeek's own raw bubble renders `pre-wrap` at 16px/24px, so a code font here
+  made the two views look like different products. It follows the light/dark
+  theme instead of looking bolted on.
 - **LaTeX math** via KaTeX: `$...$`, `$$...$$`, `\(...\)`, `\[...\]`.
 - **Code blocks rebuilt into DeepSeek's official `md-code-block` structure**:
   banner with the language label, native light/dark theme, corner decorations,
