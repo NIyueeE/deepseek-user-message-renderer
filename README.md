@@ -36,6 +36,10 @@ editing, re-rendering, or the history-item highlight.
   light/dark theme changes, so the two views are unmistakable at a glance while
   still looking native rather than bolted on. The source stays literal text:
   highlight.js escapes it into the markup, never live HTML.
+  (The banner, frame and token colours come from the page's own `md-code-block`
+  rules, so a build that ships them differently will restyle this view too; the
+  code face and code background come from the page's code tokens, which the
+  script applies itself because not every captured build consumes them.)
 - **LaTeX math** via KaTeX: `$...$`, `$$...$$`, `\(...\)`, `\[...\]`.
 - **Code blocks rebuilt into DeepSeek's official `md-code-block` structure**:
   banner with the language label, native light/dark theme, corner decorations,
