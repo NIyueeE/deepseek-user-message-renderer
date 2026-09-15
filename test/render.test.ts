@@ -211,19 +211,6 @@ describe("user message Markdown rendering", () => {
         expect(env.highlightCalls.length).toBeGreaterThan(0);
     });
 
-    test("uses the dark md-code-block variant in dark mode", async () => {
-        env.document.body.classList.add("dark");
-        const { message: darkMessage } = appendWrappedUserMessage(env.document, "```js\nconst x = 1;\n```");
-        await settle();
-
-        const codeBlock = darkMessage.querySelector(".md-code-block");
-        expect(codeBlock).not.toBeNull();
-        expect(codeBlock?.classList.contains("md-code-block-dark")).toBeTrue();
-        expect(codeBlock?.classList.contains("md-code-block-light")).toBeFalse();
-        expect(codeBlock?.querySelector(".d813de27")?.textContent).toBe("js");
-        expect(codeBlock?.querySelector("pre.language-js")).not.toBeNull();
-    });
-
     test("keeps hard line breaks inside code blocks", async () => {
         // Short message: innerText-based sources would collapse the fence
         // newlines; the script must read the source with textContent

@@ -110,6 +110,10 @@ bun run lint:fix  # auto-fix formatting and lint issues
   events with happy-dom, stubs the Tampermonkey APIs `GM_addStyle` and
   `GM_getResourceText`, and exposes the same `marked` version as the production
   script. Each test file runs in an isolated process.
+- [`test/capture.ts`](test/capture.ts): loader and shared assertion battery for
+  the real captures — the parts all three fixture files need (fibre setup, toggle
+  injection, raw view, edit icon, host-node invariants) live here once, so a fix
+  cannot land in one copy and miss the others.
 - [`test/render.test.ts`](test/render.test.ts): Markdown, native `md-code-block`
   structure, hard line breaks, style classes, resource injection, dark mode,
   block-boundary guards, and keeping original nodes intact.

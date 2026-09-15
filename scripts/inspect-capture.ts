@@ -52,7 +52,10 @@ if (block) {
     console.log("  children:", JSON.stringify(kids));
     const pre = block.querySelector("pre");
     console.log("  pre exists:", Boolean(pre), " pre class:", pre?.className ?? "(none)");
-    console.log("  pre children tags:", JSON.stringify([...pre.children].slice(0, 6).map((c) => c.tagName.toLowerCase())));
+    console.log(
+        "  pre children tags:",
+        JSON.stringify([...pre.children].slice(0, 6).map((c) => c.tagName.toLowerCase())),
+    );
     console.log("  pre text:", JSON.stringify((pre.textContent ?? "").slice(0, 90)));
     console.log("  tokens:", pre.querySelectorAll(".token").length);
     const svgs = [...block.querySelectorAll(":scope > svg")].map((s) => s.getAttribute("class"));

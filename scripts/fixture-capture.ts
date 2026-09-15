@@ -33,7 +33,7 @@
  */
 
 import { mkdirSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 
 const args = process.argv.slice(2);
 const flag = (name: string) => args.includes(`--${name}`);
@@ -130,7 +130,7 @@ async function capture(
             const s = (el as HTMLElement).style;
             if (s?.animation) s.animation = "none";
         });
-        return "<!doctype html>\n" + document.documentElement.outerHTML;
+        return `<!doctype html>\n${document.documentElement.outerHTML}`;
     });
     await page.close();
     return { html, report };

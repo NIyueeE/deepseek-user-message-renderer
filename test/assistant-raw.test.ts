@@ -65,6 +65,24 @@ function markdownColumn(message: HTMLElement): HTMLElement {
     return message.querySelector(".ds-assistant-message-main-content") as HTMLElement;
 }
 
+/**
+ * Pin one message's view before a test that cares about a direction.
+ *
+ * The toggle is a view switch, so these tests used to inherit whatever the
+ * previous test left behind — which meant one failure cascaded into every later
+ * test, and a test could pass only because of the order it ran in. Each test now
+ * states the state it needs.
+ */
+function setRawMode(message: HTMLElement, open: boolean): void {
+    const button = rawToggle(message);
+    if (!button) {
+        throw new Error("fixture missing toggle");
+    }
+    if ((button.getAttribute("aria-pressed") === "true") !== open) {
+        clickOn(button);
+    }
+}
+
 describe("assistant raw/rendered toggle", () => {
     test("injects the toggle at load without altering the assistant message", () => {
         const button = rawToggle(assistant.message);
@@ -124,10 +142,8 @@ describe("assistant raw/rendered toggle", () => {
     });
 
     test("shows the raw Markdown source on click and hides the rendered column", () => {
-        const button = rawToggle(assistant.message);
-        if (!button) {
-            throw new Error("fixture missing toggle");
-        }
+        setRawMode(assistant.message, false);
+        const button = rawToggle(assistant.message) as HTMLElement;
         clickOn(button);
 
         const column = markdownColumn(assistant.message);
@@ -152,10 +168,8 @@ describe("assistant raw/rendered toggle", () => {
     });
 
     test("returns to the rendered view on the second click", () => {
-        const button = rawToggle(assistant.message);
-        if (!button) {
-            throw new Error("fixture missing toggle");
-        }
+        setRawMode(assistant.message, true);
+        const button = rawToggle(assistant.message) as HTMLElement;
         clickOn(button);
 
         expect(rawSource(assistant.message)).toBeNull();
@@ -164,6 +178,7 @@ describe("assistant raw/rendered toggle", () => {
     });
 
     test("never mutates the host's rendered nodes", () => {
+        setRawMode(assistant.message, false);
         const column = markdownColumn(assistant.message);
         const before = column.innerHTML;
         const childrenBefore = Array.from(column.children);
@@ -178,6 +193,7 @@ describe("assistant raw/rendered toggle", () => {
     });
 
     test("is idempotent across observer scans", async () => {
+        setRawMode(assistant.message, false);
         const button = rawToggle(assistant.message) as HTMLElement;
         clickOn(button);
         await settle();
@@ -198,10 +214,7 @@ describe("assistant raw/rendered toggle", () => {
         // scan (queueMicrotask), and that unbounded chain starves every timer
         // and freezes the page. The view must survive repeated scans unchanged,
         // and timers must keep firing while it is open.
-        const button = rawToggle(assistant.message) as HTMLElement;
-        if (button.getAttribute("aria-pressed") !== "true") {
-            clickOn(button);
-        }
+        setRawMode(assistant.message, true);
         await settle();
         const first = rawContainer(assistant.message);
 
@@ -246,6 +259,7 @@ describe("assistant raw/rendered toggle", () => {
     });
 
     test("keeps the raw view when the host re-renders the action row", async () => {
+        setRawMode(assistant.message, true);
         const button = rawToggle(assistant.message) as HTMLElement;
         expect(button.getAttribute("aria-pressed")).toBe("true");
         button.remove();
@@ -257,12 +271,10 @@ describe("assistant raw/rendered toggle", () => {
     });
 
     test("toggles each message independently", () => {
-        const first = rawToggle(assistant.message) as HTMLElement;
+        // Pin both messages: the first in rendered mode, the second in raw
+        setRawMode(assistant.message, false);
+        setRawMode(second.message, false);
         const other = rawToggle(second.message) as HTMLElement;
-        // Leave the first message in rendered mode
-        if (first.getAttribute("aria-pressed") === "true") {
-            clickOn(first);
-        }
         clickOn(other);
 
         expect(rawSource(second.message)?.textContent).toBe("第二段 **内容**");
@@ -308,14 +320,14 @@ describe("assistant raw/rendered toggle", () => {
         const thinkingEl = withThinking.message.querySelector(".ds-think-content .ds-markdown");
         expect(thinkingEl?.textContent).toBe("已经思考过了");
 
-        clickOn(rawToggle(withThinking.message) as HTMLElement);
+        setRawMode(withThinking.message, true);
         expect(rawSource(withThinking.message)?.textContent).toBe("最终答案内容");
         // The reasoning column stays visible and untouched
         expect(thinkingEl?.isConnected).toBeTrue();
         expect(thinkingEl?.textContent).toBe("已经思考过了");
         // Only the reply column is hidden
         expect(markdownColumn(withThinking.message).getAttribute("data-md-raw-mode")).toBe("1");
-        clickOn(rawToggle(withThinking.message) as HTMLElement);
+        setRawMode(withThinking.message, false);
     });
 
     test("renders the source as literal text, never as live HTML", async () => {

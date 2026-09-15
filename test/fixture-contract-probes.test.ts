@@ -15,107 +15,119 @@ import { CSS_CONTRACT, extractCss } from "./fixture-contract";
  *      (`.token.lf:before{color:…}`) then counted as a syntax palette, so a
  *      capture with NO colours a reader can see was reported as having one.
  *
- * Synthetic CSS pins both directions without depending on any real capture.
+ * The cases are table-driven, so adding one is a line rather than a test name.
  */
 
-const probe = (key: keyof typeof CSS_CONTRACT) => {
+function probe(key: keyof typeof CSS_CONTRACT): (css: string) => boolean {
     const spec = CSS_CONTRACT[key];
-    if (!spec) throw new Error(`no probe named ${key}`);
+    if (!spec) {
+        throw new Error(`no probe named ${key}`);
+    }
     return spec.probe;
-};
+}
 
-describe("contract probe: syntax-token-palette", () => {
+/** Assert every sample has the expected verdict, naming the offending one. */
+function expectAll(fn: (css: string) => boolean, samples: string[], expected: boolean): void {
+    for (const css of samples) {
+        expect(fn(css), `${expected ? "expected to accept" : "expected to reject"}: ${css}`).toBe(expected);
+    }
+}
+
+describe("probe: syntax-token-palette", () => {
     const palette = probe("syntax-token-palette");
 
-    test("accepts a minified rule that colours a content token", () => {
-        expect(palette(".md-code-block.md-code-block-light .token.keyword{color:#a626a4}")).toBeTrue();
-        expect(palette(".token.string{color:#50a14f}")).toBeTrue();
+    test("accepts a rule that colours a CONTENT token, however it is written", () => {
+        expectAll(
+            palette,
+            [
+                // Minified: the colour sits straight after `{`
+                ".md-code-block.md-code-block-light .token.keyword{color:#a626a4}",
+                ".token.string{color:#50a14f}",
+                // ...and not necessarily as the first declaration
+                ".token.function{font-weight:600;color:#4078f2}",
+            ],
+            true,
+        );
     });
 
-    test("accepts a colour that is not the first declaration", () => {
-        expect(palette(".token.function{font-weight:600;color:#4078f2}")).toBeTrue();
-    });
-
-    test("rejects whitespace-marker rules, which colour nothing visible", () => {
-        // This is the 2026-08-29 capture: it had ONLY these, plus selection rules
-        expect(palette(".md-code-block.md-code-block-dark .token.token.lf:before{color:#8da1b9}")).toBeFalse();
-        expect(palette(".token.token.space:before{color:rgba(56,58,66,.2)}")).toBeFalse();
-        expect(palette(".token.tab:not(:empty):before{color:#8da1b9}")).toBeFalse();
-    });
-
-    test("rejects a bare token class with no kind name", () => {
-        expect(palette(".token{color:red}")).toBeFalse();
-    });
-
-    test("rejects rules that set something other than colour", () => {
-        expect(palette(".token.keyword{font-weight:700}")).toBeFalse();
-    });
-
-    test("rejects selection-only rules", () => {
-        expect(
-            palette(".md-code-block.md-code-block-light pre[class*=language-]::selection{background:#e5e5e6}"),
-        ).toBeFalse();
-    });
-
-    test("ignores a colour declared on an unrelated sibling selector", () => {
-        expect(palette(".something-else{color:red}")).toBeFalse();
+    test("rejects everything that only looks like a palette", () => {
+        expectAll(
+            palette,
+            [
+                // The 2026-08-29 capture had ONLY these: they colour `:before`
+                // content on whitespace markers, i.e. nothing a reader sees
+                ".md-code-block.md-code-block-dark .token.token.lf:before{color:#8da1b9}",
+                ".token.token.space:before{color:rgba(56,58,66,.2)}",
+                ".token.tab:not(:empty):before{color:#8da1b9}",
+                // No token KIND, so nothing identifies what is being coloured
+                ".token{color:red}",
+                // Sets something other than colour
+                ".token.keyword{font-weight:700}",
+                // Selection styling, not syntax colouring
+                ".md-code-block.md-code-block-light pre[class*=language-]::selection{background:#e5e5e6}",
+                // An unrelated rule that happens to mention a colour
+                ".something-else{color:red}",
+            ],
+            false,
+        );
     });
 });
 
-describe("contract probe: code-typography-consumed", () => {
+describe("probe: code-typography-consumed", () => {
     const consumed = probe("code-typography-consumed");
 
-    test("accepts the page applying the code face", () => {
-        expect(consumed(".ds-markdown pre{font-family:var(--ds-font-family-code);overflow:auto}")).toBeTrue();
+    test("accepts a rule that APPLIES a code font token", () => {
+        expectAll(
+            consumed,
+            [
+                ".ds-markdown pre{font-family:var(--ds-font-family-code);overflow:auto}",
+                "pre{font:var(--dsw-font-markdown-code)}",
+            ],
+            true,
+        );
     });
 
-    test("accepts the markdown-code token", () => {
-        expect(consumed("pre{font:var(--dsw-font-markdown-code)}")).toBeTrue();
-    });
-
-    test("rejects a stylesheet that only DEFINES the token", () => {
-        // A token definition is not a consumer. This distinction is why the
-        // script cannot rely on the page to give the raw view its code face.
-        expect(consumed("body{--ds-font-family-code:Menlo,monospace}")).toBeFalse();
-    });
-
-    test("rejects a token definition whose value is another token", () => {
-        // This exact line is in both captures, and looks identical to a consumer
-        // unless custom-property declarations are excluded.
-        expect(consumed("body{--dsw-font-markdown-code-font-family:var(--ds-font-family-code)}")).toBeFalse();
-    });
-
-    test("rejects an unrelated font token", () => {
-        expect(consumed("body{font-family:var(--dsw-font-family)}")).toBeFalse();
+    test("rejects definitions and unrelated font tokens", () => {
+        expectAll(
+            consumed,
+            [
+                // Defining the token is not consuming it — which is exactly why
+                // the script cannot rely on the page to give the raw view its face
+                "body{--ds-font-family-code:Menlo,monospace}",
+                // A definition whose value is another token looks identical to a
+                // consumer unless custom properties are excluded, and this exact
+                // line is in both captures
+                "body{--dsw-font-markdown-code-font-family:var(--ds-font-family-code)}",
+                "body{font-family:var(--dsw-font-family)}",
+            ],
+            false,
+        );
     });
 });
 
-describe("contract probe: structural features", () => {
-    test("md-code-block-frame needs the wrapper itself", () => {
-        expect(probe("md-code-block-frame")(".md-code-block{--x:1}")).toBeTrue();
-        expect(probe("md-code-block-frame")(".md-markdown-only{}")).toBeFalse();
-    });
-
-    test("md-code-block-theme-variants needs BOTH variants", () => {
-        expect(probe("md-code-block-theme-variants")(".md-code-block-dark .token{}")).toBeFalse();
-        expect(
-            probe("md-code-block-theme-variants")(".md-code-block-dark .token{}\n.md-code-block-light .token{}"),
-        ).toBeTrue();
-    });
-
-    test("dark-theme-marker needs the attribute selector", () => {
-        expect(probe("dark-theme-marker")("[data-ds-dark-theme] .x{color:red}")).toBeTrue();
-        expect(probe("dark-theme-marker")("body.dark .x{color:red}")).toBeFalse();
+describe("probe: structural features", () => {
+    test("each needs its own specific marker", () => {
+        const cases: Array<[keyof typeof CSS_CONTRACT, string, boolean]> = [
+            ["md-code-block-frame", ".md-code-block{--x:1}", true],
+            ["md-code-block-frame", ".md-markdown-only{}", false],
+            // BOTH theme variants, not just one
+            ["md-code-block-theme-variants", ".md-code-block-dark .token{}", false],
+            ["md-code-block-theme-variants", ".md-code-block-dark .token{}\n.md-code-block-light .token{}", true],
+            // The attribute selector, not the obsolete `dark` class
+            ["dark-theme-marker", "[data-ds-dark-theme] .x{color:red}", true],
+            ["dark-theme-marker", "body.dark .x{color:red}", false],
+        ];
+        for (const [key, css, expected] of cases) {
+            expect(probe(key)(css), `${key}: ${css}`).toBe(expected);
+        }
     });
 });
 
 describe("extractCss", () => {
-    test("collects every style block, in order", () => {
-        const html = "<style>a{color:red}</style><div></div><style>b{color:blue}</style>";
-        expect(extractCss(html)).toBe("a{color:red}\nb{color:blue}");
-    });
-
-    test("returns empty for a page with no styles", () => {
+    test("collects every style block in order, and nothing when there are none", () => {
+        expect(extractCss("<style>a{color:red}</style><div></div><style>b{color:blue}</style>")).toBe(
+            "a{color:red}\nb{color:blue}",
+        );
         expect(extractCss("<div>hello</div>")).toBe("");
     });
 });

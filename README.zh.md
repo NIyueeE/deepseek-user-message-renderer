@@ -88,6 +88,9 @@ bun run lint:fix  # 自动修复格式和 lint 问题
 - [`test/env.ts`](test/env.ts):用 happy-dom 模拟浏览器 DOM / MutationObserver /
   事件,stub 掉 Tampermonkey API `GM_addStyle` 和 `GM_getResourceText`,并暴露
   与生产脚本相同的 `marked` 版本。每个测试文件在独立进程中运行。
+- [`test/capture.ts`](test/capture.ts):真实抓取的加载器与共享断言集——三份夹具
+  都需要的部分(fiber 注入、切换按钮注入、raw 视图、编辑图标、宿主节点不变量)
+  只在这里实现一次,避免修好一份却漏掉另外两份。
 - [`test/render.test.ts`](test/render.test.ts):Markdown、原生 `md-code-block`
   结构、硬换行、样式类、资源注入、暗色模式,以及保留原始节点。
 - [`test/security.test.ts`](test/security.test.ts):危险 HTML 会被转义——被禁止的

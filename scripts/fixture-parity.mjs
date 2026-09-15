@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+
 /**
  * Styling parity against the REAL capture (L3).
  *
@@ -40,8 +41,8 @@
  *   DSR_SRC=... bun run fixture:parity                    # compare another script
  */
 
-import { createServer } from "node:http";
 import { readFileSync } from "node:fs";
+import { createServer } from "node:http";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -97,14 +98,18 @@ for (const m of userscript.matchAll(/^\/\/ @resource\s+(\S+)\s+(\S+)$/gm)) {
 
 console.log(`fixture: ${FIXTURE}.html`);
 console.log(`loading ${requires.length} @require libraries from their CDNs...`);
-const loaded = new Map();
+/** URL path -> response body, for everything the harness serves. */
+const served = new Map();
+const scriptTags = [];
 for (const url of requires) {
     const res = await fetch(url);
     if (!res.ok) {
         console.error(`failed to fetch ${url}: HTTP ${res.status}`);
         process.exit(2);
     }
-    loaded.set(url, await res.text());
+    const path = `/vendor/lib-${served.size}.js`;
+    served.set(path, await res.text());
+    scriptTags.push(`<script src="${path}"></script>`);
     console.log(`  ok  ${url.split("/").slice(-2).join("/")}`);
 }
 for (const [name, url] of Object.entries(resources)) {
@@ -112,15 +117,7 @@ for (const [name, url] of Object.entries(resources)) {
     resources[name] = res.ok ? await res.text() : "";
 }
 
-const scripts = [...loaded.entries()]
-    .map(([url, body], i) => {
-        const path = `/vendor/lib-${i}.js`;
-        loaded.set(path, body);
-        return `<script src="${path}"></script>`;
-    })
-    .join("\n");
-
-const boot = `${scripts}
+const boot = `${scriptTags.join("\n")}
 <script>
 window.__RESOURCES = ${JSON.stringify(resources)};
 window.GM_addStyle = (c) => { const s = document.createElement("style"); s.textContent = c; document.head.appendChild(s); return s; };
@@ -189,7 +186,7 @@ const server = createServer((req, res) => {
         res.end(userscript);
         return;
     }
-    const body = loaded.get(url);
+    const body = served.get(url);
     if (typeof body === "string") {
         res.writeHead(200, { "content-type": "text/javascript" });
         res.end(body);
@@ -273,8 +270,11 @@ if (native && ours) {
     const same = (name, key, format = (v) => v) =>
         check(name, native[key] === ours[key], `${format(native[key])} vs ${format(ours[key])}`);
     const sameJson = (name, key) =>
-        check(name, JSON.stringify(native[key]) === JSON.stringify(ours[key]),
-            `${JSON.stringify(native[key])} vs ${JSON.stringify(ours[key])}`);
+        check(
+            name,
+            JSON.stringify(native[key]) === JSON.stringify(ours[key]),
+            `${JSON.stringify(native[key])} vs ${JSON.stringify(ours[key])}`,
+        );
 
     sameJson("wrapper classes match", "wrapper");
     sameJson("child order matches (banner, pre, corner, corner)", "children");
@@ -293,9 +293,11 @@ if (native && ours) {
     same("code background matches", "preBg");
 
     // The one deliberate difference, asserted so it stays deliberate
-    check("native <pre> is bare; ours carries the language class",
+    check(
+        "native <pre> is bare; ours carries the language class",
         ours.preClass === "language-javascript",
-        `ours="${ours.preClass}" native="${native.preClass}"`);
+        `ours="${ours.preClass}" native="${native.preClass}"`,
+    );
 
     // TOKEN COLOUR PARITY: every kind both blocks contain must colour the same.
     const shared = Object.keys(native.tokens).filter((k) => k in ours.tokens);
@@ -307,8 +309,11 @@ if (native && ours) {
     );
     // A mapping that produced no coloured token at all would pass the check above
     // vacuously, so assert the script's tokens actually picked up real colours.
-    check("the script's tokens picked up real palette colours",
-        Object.keys(ours.tokens).length > 0, JSON.stringify(ours.tokens));
+    check(
+        "the script's tokens picked up real palette colours",
+        Object.keys(ours.tokens).length > 0,
+        JSON.stringify(ours.tokens),
+    );
 }
 
 // The raw view must get the same treatment
@@ -334,18 +339,36 @@ const raw = await p.evaluate(() => {
     };
 });
 
-check("raw view uses the native frame variant", /md-code-block md-code-block-(light|dark)/.test(raw?.frame ?? ""), raw?.frame);
-check("raw view code font matches the native block",
+check(
+    "raw view uses the native frame variant",
+    /md-code-block md-code-block-(light|dark)/.test(raw?.frame ?? ""),
+    raw?.frame,
+);
+check(
+    "raw view code font matches the native block",
     raw?.fontFamily === native?.fontFamily && raw?.fontSize === native?.fontSize,
-    `${raw?.fontSize} vs native ${native?.fontSize}`);
-check("raw view line height matches the native block", raw?.lineHeight === native?.lineHeight,
-    `${raw?.lineHeight} vs ${native?.lineHeight}`);
-check("raw view frame radius matches the native block", raw?.frameRadius === native?.frameRadius,
-    `${raw?.frameRadius} vs ${native?.frameRadius}`);
-check("raw view background placement matches the native block", raw?.preBg === native?.preBg,
-    `pre bg ${raw?.preBg} vs ${native?.preBg}`);
-check("raw view banner background matches the native block", raw?.bannerBg === native?.bannerBg,
-    `${raw?.bannerBg} vs ${native?.bannerBg}`);
+    `${raw?.fontSize} vs native ${native?.fontSize}`,
+);
+check(
+    "raw view line height matches the native block",
+    raw?.lineHeight === native?.lineHeight,
+    `${raw?.lineHeight} vs ${native?.lineHeight}`,
+);
+check(
+    "raw view frame radius matches the native block",
+    raw?.frameRadius === native?.frameRadius,
+    `${raw?.frameRadius} vs ${native?.frameRadius}`,
+);
+check(
+    "raw view background placement matches the native block",
+    raw?.preBg === native?.preBg,
+    `pre bg ${raw?.preBg} vs ${native?.preBg}`,
+);
+check(
+    "raw view banner background matches the native block",
+    raw?.bannerBg === native?.bannerBg,
+    `${raw?.bannerBg} vs ${native?.bannerBg}`,
+);
 check("raw view is syntax coloured (markdown grammar)", (raw?.tokens ?? 0) > 0, `tokens=${raw?.tokens}`);
 // Honest reporting rather than a dressed-up pass: the page's palette only covers
 // a few token kinds per theme (light: keyword, string, function, punctuation).

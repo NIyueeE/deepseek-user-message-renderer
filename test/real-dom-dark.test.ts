@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { appendUserMessage, loadUserscript, settle, setupTampermonkeyEnv } from "./env";
+import { clickOn, describeCaptureBattery, loadCapture } from "./capture";
+import { appendUserMessage, settle } from "./env";
 
 /**
  * The DARK build, against a real capture.
@@ -20,32 +21,22 @@ import { appendUserMessage, loadUserscript, settle, setupTampermonkeyEnv } from 
  * happened to work (the build toggles the `dark` class too) — so nothing failed.
  * These tests pin the real mechanism, and the attribute-only and class-only cases
  * separately, so neither accident has to keep holding.
+ *
+ * Everything not specific to the dark theme (toggle injection, raw view, edit
+ * icon, host nodes) is covered by the shared battery.
  */
 const FIXTURE = join(import.meta.dir, "fixtures", "deepseek-chat-dark.html");
-const REPLY_MARKDOWN = "# 标题\n\n正文 **加粗**";
+const capture = await loadCapture({ fixture: "deepseek-chat-dark", replyMarkdown: "# 标题\n\n正文 **加粗**" });
+const { env } = capture;
 
-const env = setupTampermonkeyEnv();
-env.window.document.write(readFileSync(FIXTURE, "utf-8"));
+describeCaptureBattery(capture, { toggles: 1 });
 
-for (const md of env.document.querySelectorAll("._4f9bf79 .ds-assistant-message-main-content")) {
-    const component = { memoizedProps: { markdown: REPLY_MARKDOWN }, return: null };
-    const domFiber = { memoizedProps: { className: md.className }, return: component };
-    Object.defineProperty(md, "__reactFiber$fixture", {
-        value: domFiber,
-        enumerable: true,
-        configurable: true,
-    });
-}
+const body = env.document.body as HTMLElement;
 
-await loadUserscript();
-await settle();
-
-// A user message carrying a fence, so we have a code block the SCRIPT built
+// A user message carrying a fence, so there is a code block the SCRIPT built
 // (the capture's own blocks are DeepSeek's)
 appendUserMessage(env.document, "```javascript\nconst answer = 42;\n```");
 await settle();
-
-const body = env.document.body as HTMLElement;
 
 /** The variant class of the block the script built for that user message. */
 function ourBlockVariant(): string | null {
@@ -72,8 +63,8 @@ async function setTheme(attribute: boolean, darkClass: boolean): Promise<void> {
     await settle();
 }
 
-describe("real DeepSeek DOM: dark capture", () => {
-    test("the dark marker is on the body, not the document element", () => {
+describe("the dark capture", () => {
+    test("marks the theme on the body, not the document element", () => {
         // This is the fact that corrected the script. If DeepSeek moves it, this
         // fails and points at what to re-derive.
         expect(body.hasAttribute("data-ds-dark-theme")).toBeTrue();
@@ -81,7 +72,7 @@ describe("real DeepSeek DOM: dark capture", () => {
         expect(env.document.documentElement.hasAttribute("data-ds-dark-theme")).toBeFalse();
     });
 
-    test("the capture carries the dark palette, not just dark class names", () => {
+    test("carries the dark palette, not just dark class names", () => {
         // Read the file (happy-dom does not compute the cascade): a capture with
         // md-code-block-dark but no dark token rules would look verifiable and
         // would not be.
@@ -97,34 +88,48 @@ describe("real DeepSeek DOM: dark capture", () => {
         expect(html).toContain("body[data-ds-dark-theme]");
     });
 
-    test("DeepSeek's own blocks in this capture are all dark", () => {
+    test("DeepSeek's own blocks and the script's blocks are both dark", () => {
         const nativeVariants = [...env.document.querySelectorAll("._4f9bf79 .md-code-block")].map((b) => b.className);
         expect(nativeVariants.length).toBeGreaterThanOrEqual(2);
         for (const variant of nativeVariants) {
             expect(variant).toContain("md-code-block-dark");
         }
-    });
-
-    test("the script builds dark blocks on this page", () => {
         expect(ourBlockVariant()).toBe("md-code-block md-code-block-dark");
     });
 
-    test("the raw view is dark too", async () => {
+    test("the raw view follows the theme, rebuilt rather than left stale", async () => {
+        // The raw view's variant is baked in at build time, so it cannot follow
+        // the theme on its own — the observer has to rebuild it.
         const toggle = env.document.querySelector("[data-md-raw-toggle]") as HTMLElement;
-        expect(toggle).not.toBeNull();
-        toggle.dispatchEvent(new env.window.Event("click", { bubbles: true }));
+        clickOn(env, toggle);
         await settle();
         expect(rawVariant()).toBe("md-code-block md-code-block-dark");
-        toggle.dispatchEvent(new env.window.Event("click", { bubbles: true }));
+
+        await setTheme(false, false);
+        expect(rawVariant()).toBe("md-code-block md-code-block-light");
+
+        await setTheme(true, true);
+        expect(rawVariant()).toBe("md-code-block md-code-block-dark");
+        expect(env.document.querySelectorAll(".md-raw-source").length).toBe(1);
+
+        clickOn(env, toggle);
         await settle();
         expect(rawVariant()).toBeNull();
     });
 
-    test("dark is detected from the body ATTRIBUTE alone", async () => {
-        // The attribute is the real marker and the stylesheet keys off it. If the
-        // script only looked at the class, this would stay light.
-        await setTheme(true, false);
-        expect(ourBlockVariant()).toBe("md-code-block md-code-block-dark");
+    test("the detection matrix: attribute, class, neither", async () => {
+        // Each marker on its own must be enough (the stylesheet keys off the
+        // attribute; older builds used the class), and neither means light.
+        const cases: Array<{ attribute: boolean; darkClass: boolean; want: string }> = [
+            { attribute: true, darkClass: false, want: "md-code-block md-code-block-dark" },
+            { attribute: false, darkClass: true, want: "md-code-block md-code-block-dark" },
+            { attribute: true, darkClass: true, want: "md-code-block md-code-block-dark" },
+            { attribute: false, darkClass: false, want: "md-code-block md-code-block-light" },
+        ];
+        for (const { attribute, darkClass, want } of cases) {
+            await setTheme(attribute, darkClass);
+            expect(ourBlockVariant(), `attribute=${attribute} darkClass=${darkClass}`).toBe(want);
+        }
         await setTheme(true, true);
     });
 
@@ -145,38 +150,5 @@ describe("real DeepSeek DOM: dark capture", () => {
         expect(body.className).toBe(classBefore); // nothing else changed
         expect(ourBlockVariant()).toBe("md-code-block md-code-block-dark");
         await setTheme(true, true);
-    });
-
-    test("dark is detected from the dark CLASS alone", async () => {
-        // The older mechanism, kept working: some builds signal only the class.
-        await setTheme(false, true);
-        expect(ourBlockVariant()).toBe("md-code-block md-code-block-dark");
-        await setTheme(true, true);
-    });
-
-    test("removing both markers returns the page to light", async () => {
-        await setTheme(false, false);
-        expect(ourBlockVariant()).toBe("md-code-block md-code-block-light");
-        await setTheme(true, true);
-        expect(ourBlockVariant()).toBe("md-code-block md-code-block-dark");
-    });
-
-    test("a theme switch rebuilds an open raw view", async () => {
-        // The raw view's variant is baked in at build time, so it cannot follow
-        // the theme on its own.
-        const toggle = env.document.querySelector("[data-md-raw-toggle]") as HTMLElement;
-        toggle.dispatchEvent(new env.window.Event("click", { bubbles: true }));
-        await settle();
-        expect(rawVariant()).toBe("md-code-block md-code-block-dark");
-
-        await setTheme(false, false);
-        expect(rawVariant()).toBe("md-code-block md-code-block-light");
-
-        await setTheme(true, true);
-        expect(rawVariant()).toBe("md-code-block md-code-block-dark");
-        expect(env.document.querySelectorAll(".md-raw-source").length).toBe(1);
-
-        toggle.dispatchEvent(new env.window.Event("click", { bubbles: true }));
-        await settle();
     });
 });

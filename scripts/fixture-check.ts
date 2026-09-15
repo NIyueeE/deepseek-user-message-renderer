@@ -9,7 +9,7 @@
  * Use `bun run fixture:capture` when you need a fresh capture from the live page.
  */
 
-import { readFileSync, readdirSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { Window } from "happy-dom";
 import type { FixtureAudit, FixtureProvenance } from "../test/fixture-contract";
@@ -76,10 +76,9 @@ function report(name: string, audit: FixtureAudit, provenance: FixtureProvenance
             console.log(`  ! ${w}`);
         }
     }
-    const extra = provenance as (FixtureProvenance & { notes?: string[]; knownDeficiencies?: string[] }) | null;
     for (const [label, list] of [
-        ["known deficiencies of this capture", extra?.knownDeficiencies],
-        ["notes", extra?.notes],
+        ["known deficiencies of this capture", provenance?.knownDeficiencies],
+        ["notes", provenance?.notes],
     ] as const) {
         if (list?.length) {
             console.log(`\n${label}`);

@@ -32,6 +32,10 @@ export interface FixtureProvenance {
     theme: "light" | "dark" | "unknown";
     /** Free-form note about how it was produced. */
     method?: string;
+    /** Free-form notes worth surfacing in `fixture:check`. */
+    notes?: string[];
+    /** Free-form record of what this capture cannot answer. */
+    knownDeficiencies?: string[];
     /**
      * Things this capture is known to lack, each a key from CONTRACT_GAPS.
      * Every entry is verified to actually be missing; an entry that is present
@@ -68,7 +72,7 @@ export interface FixtureAudit {
  * DOM anchors the script's selectors depend on. Keep in sync with the constants
  * in src/ (USER_TEXT_SELECTOR, ANSWER_SELECTORS, THINKING_SELECTORS, ...).
  */
-export const DOM_CONTRACT: Record<string, { selector: string; min: number }> = {
+const DOM_CONTRACT: Record<string, { selector: string; min: number }> = {
     userGroup: { selector: "._9663006", min: 1 },
     userText: { selector: "._9663006 div.fbb737a4", min: 1 },
     collapsibleWrapper: { selector: ".ds-collapsible-text", min: 1 },
@@ -80,7 +84,7 @@ export const DOM_CONTRACT: Record<string, { selector: string; min: number }> = {
 };
 
 /** Design tokens the script reads. Missing ones silently change its output. */
-export const TOKEN_CONTRACT: string[] = [
+const TOKEN_CONTRACT: string[] = [
     "--ds-font-family-code",
     "--dsw-font-family",
     "--dsw-font-markdown-code-font-size",

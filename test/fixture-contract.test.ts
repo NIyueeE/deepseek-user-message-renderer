@@ -72,14 +72,11 @@ describe("captured fixture contract", () => {
                 expect(audit.provenance?.capturedAt).toMatch(/^\d{4}-\d{2}-\d{2}/);
             });
 
-            test("carries every DOM anchor the script targets", () => {
-                const missing = audit.failures.filter((f) => f.key in audit.domPresent);
-                expect(missing.map((f) => f.detail)).toEqual([]);
-            });
-
-            test("carries every design token the script reads", () => {
-                const missing = audit.failures.filter((f) => f.key.startsWith("--"));
-                expect(missing.map((f) => f.detail)).toEqual([]);
+            test("carries every DOM anchor, design token and CSS feature", () => {
+                // One superset check rather than three subset ones: every failure
+                // carries a `detail` naming the category and the missing item, so
+                // splitting it added test names, not diagnostics.
+                expect(audit.failures.map((f) => f.detail)).toEqual([]);
             });
 
             test("still looks like a DeepSeek chat page", () => {
@@ -87,20 +84,14 @@ describe("captured fixture contract", () => {
                 expect(audit.counts.cssRules).toBeGreaterThan(100);
             });
 
-            test("no undeclared stylistic gaps", () => {
-                const missing = audit.failures.filter((f) => f.key in audit.cssPresent);
-                expect(missing.map((f) => f.detail)).toEqual([]);
+            test("gaps are declared, known, and match reality", () => {
+                // A missing feature must be declared as a gap ("this capture cannot
+                // answer that"), and a declared gap the capture actually HAS is also
+                // an error, so the list cannot rot into a blanket excuse.
                 for (const gap of audit.gaps) {
                     expect(CONTRACT_GAPS[gap.key]).toBeDefined();
                 }
-            });
-
-            test("declared gaps match reality (no stale declarations)", () => {
                 expect(audit.staleGaps.map((f) => f.detail)).toEqual([]);
-            });
-
-            test("no contract failures of any kind", () => {
-                expect(audit.failures.map((f) => f.detail)).toEqual([]);
             });
         });
     }
