@@ -63,9 +63,13 @@ describe("assistant raw/rendered toggle", () => {
     test("injects the toggle at load without altering the assistant message", () => {
         const button = rawToggle(assistant.message);
         expect(button).not.toBeNull();
-        // Injected directly after the copy button, in the same row
+        // Appended at the FAR RIGHT of the button row, so it reads as an extra
+        // utility rather than interrupting the native button order
         expect(button?.parentElement).toBe(assistant.copyButton.parentElement);
-        expect(button?.previousElementSibling).toBe(assistant.copyButton);
+        expect(button?.nextElementSibling).toBeNull();
+        // After the LAST native button (copy, reply, ...), not sandwiched between
+        // them
+        expect(button?.previousElementSibling).toBe(assistant.actionRow.querySelectorAll('[role="button"]')[1]);
         // Default state is rendered
         expect(rawSource(assistant.message)).toBeNull();
         expect(markdownColumn(assistant.message).getAttribute("data-md-raw-mode")).toBeNull();
@@ -93,6 +97,20 @@ describe("assistant raw/rendered toggle", () => {
         expect(Array.from(button?.children ?? []).map((c) => c.className)).toEqual(
             Array.from(assistant.copyButton.children).map((c) => c.className),
         );
+    });
+
+    test("draws a real </> glyph, not just two chevrons", () => {
+        const svg = rawToggle(assistant.message)?.querySelector("svg");
+        const d = svg?.querySelector("path")?.getAttribute("d") ?? "";
+        // Three strokes: two chevrons plus the slash between them. Dropping the
+        // slash (a regression that shipped once) turns "</>" into "<>" and the
+        // button no longer says what it does.
+        const subpaths = d.split("M").filter(Boolean);
+        expect(subpaths.length).toBe(3);
+        // The native icon's geometry is adopted, not a hardcoded size
+        expect(svg?.getAttribute("viewBox")).toBe("0 0 16 16");
+        expect(svg?.getAttribute("fill")).toBe("none");
+        expect(svg?.querySelector("path")?.getAttribute("stroke")).toBe("currentColor");
     });
 
     test("shows the raw Markdown source on click and hides the rendered column", () => {

@@ -2,7 +2,7 @@
 // @name         DeepSeek User Message Markdown Renderer
 // @name:zh-CN   DeepSeek 用户消息 Markdown 渲染器
 // @namespace    http://tampermonkey.net/
-// @version      1.1.3
+// @version      1.1.4
 // @description  Render your own messages on DeepSeek web with native-style Markdown, LaTeX math, and official code blocks; safe editing and history highlight included.
 // @description:zh-CN  让 DeepSeek 网页版中你自己发送的消息以原生样式渲染 Markdown、LaTeX 公式和官方风格代码块;支持安全编辑与历史消息高亮。
 // @author       NIyueeE
@@ -102,11 +102,16 @@
                 // revealed on hover with the usual short delay. `title` is
                 // deliberately NOT set, so no second, unstyled box appears.
                 `[${RAW_BUTTON_ATTR}]::after {` +
-                " content: attr(data-md-raw-tip); position: absolute; top: calc(100% + 6px); left: 50%;" +
-                " transform: translateX(-50%); padding: 6px 10px; border-radius: 8px;" +
+                " content: attr(data-md-raw-tip); position: absolute; top: calc(100% + 8px); left: 50%;" +
+                " transform: translateX(-50%);" +
+                " box-sizing: border-box; padding: 4px 8px; border-radius: 6px;" +
                 " background-color: var(--dsw-alias-tooltip-bg, #2c2c2e);" +
                 " color: var(--dsw-alias-label-primary-inverted, #fff);" +
-                " font: var(--dsw-font-xxs-12, 12px/18px var(--dsw-font-family, sans-serif));" +
+                " font-family: var(--dsw-font-family, inherit);" +
+                " font-size: var(--dsw-font-xxs-12-font-size, 12px);" +
+                " font-weight: var(--dsw-font-xxs-12-font-weight, 400);" +
+                " line-height: var(--dsw-font-xxs-12-line-height, 18px);" +
+                " box-shadow: var(--dsw-shadow-lv2, 0 2px 8px rgba(0, 0, 0, 0.12));" +
                 " white-space: nowrap; opacity: 0; pointer-events: none; z-index: 10;" +
                 " transition: opacity var(--ds-transition-duration-fast, 0.1s) ease; }" +
                 `[${RAW_BUTTON_ATTR}]:hover::after, [${RAW_BUTTON_ATTR}]:focus-visible::after {` +
@@ -1437,6 +1442,68 @@
         return button;
     }
 
+    // The element the native action buttons actually live in: the row may be a
+    // wrapper around a single inner row, and appending to the wrong one would
+    // misalign the toggle
+    function buttonRowFor(actionRow) {
+        const buttons = actionRow.querySelectorAll('[role="button"]');
+        if (buttons.length === 0) {
+            return actionRow;
+        }
+        // Walk up from a button to the deepest ancestor that still holds exactly
+        // this row's buttons
+        let row = buttons[0].parentElement;
+        while (row && row !== actionRow && row.parentElement !== actionRow) {
+            const parent = row.parentElement;
+            if (!parent || parent.querySelectorAll('[role="button"]').length !== buttons.length) {
+                break;
+            }
+            row = parent;
+        }
+        return row ?? actionRow;
+    }
+
+    // A "</>" mark laid out on a 16x16 grid: a left chevron, a slash, and a
+    // right chevron. The proportions follow the widely used "code" icon — a
+    // wider slash and roomier chevrons — because a tighter hand-rolled variant
+    // turned to mush at the ~20px the action bar renders.
+    const CODE_GLYPH = [
+        // left chevron
+        [
+            [6, 4],
+            [2, 8],
+            [6, 12],
+        ],
+        // slash
+        [
+            [9.33, 2.67],
+            [6.67, 13.33],
+        ],
+        // right chevron
+        [
+            [10, 4],
+            [14, 8],
+            [10, 12],
+        ],
+    ];
+
+    // Map the 16x16 glyph onto the icon's own coordinate system, scaling
+    // uniformly so the mark keeps its proportions whatever viewBox a build uses
+    function mapGlyphToViewBox(points, viewBox) {
+        const nums = String(viewBox || "")
+            .trim()
+            .split(/[\s,]+/)
+            .map(Number)
+            .filter((n) => Number.isFinite(n));
+        const [minX, minY, vbW, vbH] = nums.length === 4 ? nums : [0, 0, 16, 16];
+        const scale = Math.min(vbW, vbH) / 16;
+        const round = (n) => Math.round(n * 100) / 100;
+        return points
+            .map(([x, y]) => [round(minX + x * scale), round(minY + y * scale)])
+            .map(([x, y], i) => `${i === 0 ? "M" : "L"}${x} ${y}`)
+            .join("");
+    }
+
     // Our "</>" glyph, drawn with the native icon's own geometry
     function buildRawToggleIcon(doc, template) {
         // Derive every geometric attribute from the native icon being replaced,
@@ -1475,36 +1542,25 @@
         // path winning, so the glyph is drawn exactly like the host's icons
         collect(template, ["class", "xmlns", "viewBox", "width", "height", "fill"]);
         collect(template?.querySelector("path"), ["d", "class"]);
-        // A "</>" glyph expressed on the native 16x16 grid, scaled to whatever
-        // viewBox the host's icon uses
-        const scale = viewBox.includes("0 0 16 16") || viewBox === "" ? 1 : null;
-        const glyphs =
-            scale === 1
-                ? ["M5.4 4.6L2.6 8l2.8 3.4", "M10.6 4.6L13.4 8l-2.8 3.4"]
-                : ["M2.6 4.5L0.9 8l1.7 3.5", "M5.4 4.5L7.1 8l-1.7 3.5"];
-        for (const d of glyphs) {
-            const pathEl = doc.createElementNS(SVG_NS, "path");
-            pathEl.setAttribute("d", d);
-            for (const [name, value] of Object.entries(inherited)) {
+        // One path carrying all three strokes, so the whole mark inherits the
+        // native icon's presentation attributes at once and always scales as a
+        // single unit (separate paths used to disagree about the viewBox)
+        const pathEl = doc.createElementNS(SVG_NS, "path");
+        pathEl.setAttribute("d", CODE_GLYPH.map((points) => mapGlyphToViewBox(points, viewBox)).join(" "));
+        for (const [name, value] of Object.entries(inherited)) {
+            pathEl.setAttribute(name, value);
+        }
+        const withDefault = (name, value) => {
+            if (!(name in inherited)) {
                 pathEl.setAttribute(name, value);
             }
-            if (!("stroke" in inherited)) {
-                pathEl.setAttribute("stroke", stroke);
-            }
-            if (!("fill" in inherited)) {
-                pathEl.setAttribute("fill", "none");
-            }
-            if (!("stroke-width" in inherited)) {
-                pathEl.setAttribute("stroke-width", "1.5");
-            }
-            if (!("stroke-linecap" in inherited)) {
-                pathEl.setAttribute("stroke-linecap", "round");
-            }
-            if (!("stroke-linejoin" in inherited)) {
-                pathEl.setAttribute("stroke-linejoin", "round");
-            }
-            svg.appendChild(pathEl);
-        }
+        };
+        withDefault("stroke", stroke);
+        withDefault("fill", "none");
+        withDefault("stroke-width", "1.5");
+        withDefault("stroke-linecap", "round");
+        withDefault("stroke-linejoin", "round");
+        svg.appendChild(pathEl);
         return svg;
     }
 
@@ -1537,20 +1593,16 @@
             return state;
         }
         const doc = message.ownerDocument;
-        // Anchor after the copy button when there is one; a row that is itself a
-        // single button anchors on itself so the toggle is never nested inside it
+        // Clone the host's own button, so every native class and the whole
+        // hover/active/focus structure come along
         const copyBtn = actionRow.querySelector('[role="button"]');
         const anchor = copyBtn ?? (actionRow.matches?.('[role="button"]') ? actionRow : null);
-        // Cloned from the host's own button, so every native class and the whole
-        // hover/active/focus structure come along
         const button = buildRawToggleButton(doc, anchor);
-        // Inserted directly after the copy button, inside the same row, so the
-        // toggle sits next to it exactly like the other action buttons
-        if (anchor) {
-            anchor.insertAdjacentElement("afterend", button);
-        } else {
-            actionRow.appendChild(button);
-        }
+        // Kept at the FAR RIGHT of the action row, after the reply/share buttons,
+        // so it reads as an extra utility instead of interrupting the native
+        // button order. It is appended to the innermost row that actually holds
+        // the buttons, so it lines up with them.
+        buttonRowFor(actionRow).appendChild(button);
         state.button = button;
         // Track the message so later scans keep the toggle and the raw view
         // consistent with the host's DOM

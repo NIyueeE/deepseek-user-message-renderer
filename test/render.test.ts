@@ -186,10 +186,15 @@ describe("user message Markdown rendering", () => {
                 // The hint is drawn from the page's tooltip tokens instead of the
                 // browser's title box
                 "[data-md-raw-toggle]::after { content: attr(data-md-raw-tip); position: absolute;" +
-                " top: calc(100% + 6px); left: 50%; transform: translateX(-50%); padding: 6px 10px;" +
-                " border-radius: 8px; background-color: var(--dsw-alias-tooltip-bg, #2c2c2e);" +
+                " top: calc(100% + 8px); left: 50%; transform: translateX(-50%);" +
+                " box-sizing: border-box; padding: 4px 8px; border-radius: 6px;" +
+                " background-color: var(--dsw-alias-tooltip-bg, #2c2c2e);" +
                 " color: var(--dsw-alias-label-primary-inverted, #fff);" +
-                " font: var(--dsw-font-xxs-12, 12px/18px var(--dsw-font-family, sans-serif));" +
+                " font-family: var(--dsw-font-family, inherit);" +
+                " font-size: var(--dsw-font-xxs-12-font-size, 12px);" +
+                " font-weight: var(--dsw-font-xxs-12-font-weight, 400);" +
+                " line-height: var(--dsw-font-xxs-12-line-height, 18px);" +
+                " box-shadow: var(--dsw-shadow-lv2, 0 2px 8px rgba(0, 0, 0, 0.12));" +
                 " white-space: nowrap; opacity: 0; pointer-events: none; z-index: 10;" +
                 " transition: opacity var(--ds-transition-duration-fast, 0.1s) ease; }" +
                 "[data-md-raw-toggle]:hover::after, [data-md-raw-toggle]:focus-visible::after {" +

@@ -293,7 +293,15 @@ export function appendAssistantMessage(
     // Identity that a clone must NOT copy over to the toggle
     copyButton.id = "native-copy-button";
     copyButton.setAttribute("title", "复制");
-    innerRow.appendChild(copyButton);
+    // A second native button after the copy button (reply/share), so the
+    // "far right" placement can be asserted meaningfully
+    const replyButton = document.createElement("div");
+    replyButton.setAttribute("role", "button");
+    replyButton.setAttribute("tabindex", "0");
+    replyButton.className = "ds-button ds-button--iconLabelTertiary ds-button--icon ds-button--capsule ds-button--xs";
+    replyButton.innerHTML =
+        '<div class="ds-button__background"></div><div class="ds-button__icon ds-button__icon--last-child"></div>';
+    innerRow.append(copyButton, replyButton);
     actionRow.appendChild(innerRow);
     group.appendChild(actionRow);
     document.body.appendChild(group);
