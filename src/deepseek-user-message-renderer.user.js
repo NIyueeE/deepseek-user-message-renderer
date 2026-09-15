@@ -2,7 +2,7 @@
 // @name         DeepSeek User Message Markdown Renderer
 // @name:zh-CN   DeepSeek 用户消息 Markdown 渲染器
 // @namespace    http://tampermonkey.net/
-// @version      1.1.4
+// @version      1.2.0
 // @description  Render your own messages on DeepSeek web with native-style Markdown, LaTeX math, and official code blocks; safe editing and history highlight included.
 // @description:zh-CN  让 DeepSeek 网页版中你自己发送的消息以原生样式渲染 Markdown、LaTeX 公式和官方风格代码块;支持安全编辑与历史消息高亮。
 // @author       NIyueeE
@@ -551,6 +551,21 @@
         return svg;
     }
 
+    // Dark-mode detection. The live build swaps a `data-ds-dark-theme` attribute
+    // on the document element and its stylesheet keys off
+    // `[data-ds-dark-theme] ...`; older builds used a `dark` class on <body>.
+    // Checking only the class — as this script used to — meant dark mode was
+    // never detected on the current build, so code blocks kept the light theme.
+    function isDarkTheme() {
+        if (document.documentElement?.hasAttribute("data-ds-dark-theme")) {
+            return true;
+        }
+        if (typeof document.querySelector === "function" && document.querySelector("[data-ds-dark-theme]")) {
+            return true;
+        }
+        return document.body?.classList.contains("dark") === true;
+    }
+
     function upgradeCodeBlock(pre) {
         if (!pre || pre.closest(".md-code-block")) {
             return;
@@ -595,7 +610,7 @@
         // !important ones), and pre-wrap matches native code blocks
         pre.style.setProperty("white-space", "pre-wrap", "important");
 
-        const dark = doc.body.classList.contains("dark");
+        const dark = isDarkTheme();
         const wrapper = doc.createElement("div");
         wrapper.className = `md-code-block md-code-block-${dark ? "dark" : "light"}`;
 
@@ -947,7 +962,7 @@
         // Theme switch: code blocks carry a dark/light variant class decided at
         // upgrade time, so when the page theme changes the rendered message
         // must be rebuilt. The observer picks up the body class change.
-        const themeKey = document.body.classList.contains("dark") ? "dark" : "light";
+        const themeKey = isDarkTheme() ? "dark" : "light";
 
         // Collapsible messages render into a sibling container so the host's
         // own child nodes stay valid for its commits; short (flat) messages
@@ -1226,7 +1241,22 @@
     const RAW_TOGGLE_TITLES = ["切换到渲染视图", "查看原始 Markdown"];
     // The reasoning chain container: its Markdown must never be mistaken for the
     // reply, and its React prop is `content` rather than `markdown`
-    const THINKING_SELECTOR = ".ds-think-content";
+    // The live build has no `ds-think-content` class; it marks the block with
+    // the thinking-time chip (`._5255ff8._4d41763`, the "已思考（用时 N 秒）"
+    // label) whose wrapper also carries the reply-vs-reasoning spacing rule.
+    // Both that marker and the historical class are accepted.
+    const THINKING_SELECTORS = [".ds-think-content", "._5255ff8._4d41763", "._4d41763"];
+
+    // Nearest reasoning container around a node, if any
+    function closestThinking(node) {
+        for (const selector of THINKING_SELECTORS) {
+            const hit = node.closest?.(selector);
+            if (hit) {
+                return hit;
+            }
+        }
+        return null;
+    }
     // The rendered reply column, most specific first
     const ANSWER_SELECTORS = [".ds-assistant-message-main-content", ".ds-markdown"];
     // Candidate prop names for the raw source, in priority order. `markdown` is
@@ -1331,7 +1361,7 @@
     function findAnswerMarkdown(message) {
         for (const selector of ANSWER_SELECTORS) {
             for (const el of message.querySelectorAll(selector)) {
-                if (!el.closest(THINKING_SELECTOR)) {
+                if (!closestThinking(el)) {
                     return el;
                 }
             }
@@ -1463,57 +1493,52 @@
         return row ?? actionRow;
     }
 
-    // A "</>" mark laid out on a 16x16 grid: a left chevron, a slash, and a
-    // right chevron. The proportions follow the widely used "code" icon — a
-    // wider slash and roomier chevrons — because a tighter hand-rolled variant
-    // turned to mush at the ~20px the action bar renders.
-    const CODE_GLYPH = [
-        // left chevron
-        [
-            [6, 4],
-            [2, 8],
-            [6, 12],
-        ],
-        // slash
-        [
-            [9.33, 2.67],
-            [6.67, 13.33],
-        ],
-        // right chevron
-        [
-            [10, 4],
-            [14, 8],
-            [10, 12],
-        ],
-    ];
+    // Our "</>" mark, as a FILLED OUTLINE on a 16x16 grid.
+    //
+    // This shape matters. Every DeepSeek icon is a solid fill
+    // (`fill="currentColor"`, `stroke` nowhere) — verified against the live
+    // action bar. Drawing the mark as a stroked polyline while inheriting the
+    // native `fill` painted it twice: filled, then outlined at 1.5px. That is
+    // what produced the fat, blobby glyph that matched nothing around it.
+    // Expressing the outline explicitly gives one filled path, like its
+    // neighbours.
+    const CODE_GLYPH =
+        "M5.58 3.58L1.15 8l4.43 4.42.84-.84L2.85 8l3.57-3.58z" +
+        "M8.75 2.52L6.09 13.18l1.16.3 2.66-10.36z" +
+        "M9.58 4.42L13.15 8l-3.57 3.58.84.84L14.85 8l-4.43-4.42z";
 
-    // Map the 16x16 glyph onto the icon's own coordinate system, scaling
-    // uniformly so the mark keeps its proportions whatever viewBox a build uses
-    function mapGlyphToViewBox(points, viewBox) {
+    // Map the 16x16 glyph onto the icon's coordinate system, scaling uniformly
+    // so the mark keeps its proportions whatever viewBox a build uses
+    function mapGlyphToViewBox(path, viewBox) {
         const nums = String(viewBox || "")
             .trim()
             .split(/[\s,]+/)
             .map(Number)
             .filter((n) => Number.isFinite(n));
-        const [minX, minY, vbW, vbH] = nums.length === 4 ? nums : [0, 0, 16, 16];
+        if (nums.length !== 4) {
+            return path;
+        }
+        const [minX, minY, vbW, vbH] = nums;
         const scale = Math.min(vbW, vbH) / 16;
+        if (Math.abs(scale - 1) < 1e-6 && minX === 0 && minY === 0) {
+            return path;
+        }
         const round = (n) => Math.round(n * 100) / 100;
-        return points
-            .map(([x, y]) => [round(minX + x * scale), round(minY + y * scale)])
-            .map(([x, y], i) => `${i === 0 ? "M" : "L"}${x} ${y}`)
-            .join("");
+        return path.replace(
+            /(-?\d+(?:\.\d+)?) (-?\d+(?:\.\d+)?)/g,
+            (_, x, y) => `${round(minX + Number(x) * scale)} ${round(minY + Number(y) * scale)}`,
+        );
     }
 
-    // Our "</>" glyph, drawn with the native icon's own geometry
+    // Our "</>" glyph, adopting the native icon's box, viewBox and paint
     function buildRawToggleIcon(doc, template) {
-        // Derive every geometric attribute from the native icon being replaced,
-        // so our glyph is exactly the same box, scale, stroke and colour as the
-        // host's own icons. Hardcoding a size was why the button looked smaller
-        // and off-centre compared with its neighbours. The fallback values only
-        // apply when there is no native icon to copy.
+        // Take the geometry from the native icon being replaced, so the mark sits
+        // in exactly the same box as the host's own icons. Hardcoding a size was
+        // why the button first looked smaller and off-centre; the fallbacks below
+        // only apply when there is no native icon to copy.
         const size = template?.getAttribute("width") || template?.getAttribute("height") || "16";
         const viewBox = template?.getAttribute("viewBox") || "0 0 16 16";
-        const stroke = template?.getAttribute("stroke") || "currentColor";
+        const templatePath = template?.querySelector("path");
         const svg = doc.createElementNS(SVG_NS, "svg");
         svg.setAttribute("width", size);
         svg.setAttribute("height", size);
@@ -1523,43 +1548,21 @@
         if (template?.getAttribute("class")) {
             svg.setAttribute("class", template.getAttribute("class"));
         }
-        // Copy the native paths' presentation attributes (stroke width, line
-        // caps/joins, ...) onto our own paths, so the glyph is drawn with the
-        // page's own icon language instead of guessed values.
-        const inherited = {};
-        const collect = (el, skip) => {
-            if (!el) {
-                return;
-            }
-            for (const attr of Array.from(el.attributes)) {
-                if (!skip.includes(attr.name) && !(attr.name in inherited)) {
-                    inherited[attr.name] = attr.value;
-                }
-            }
-        };
-        // The native icon may carry its presentation attributes on the <svg>
-        // itself (stroke, stroke-width, ...) or on the path; take both, with the
-        // path winning, so the glyph is drawn exactly like the host's icons
-        collect(template, ["class", "xmlns", "viewBox", "width", "height", "fill"]);
-        collect(template?.querySelector("path"), ["d", "class"]);
-        // One path carrying all three strokes, so the whole mark inherits the
-        // native icon's presentation attributes at once and always scales as a
-        // single unit (separate paths used to disagree about the viewBox)
         const pathEl = doc.createElementNS(SVG_NS, "path");
-        pathEl.setAttribute("d", CODE_GLYPH.map((points) => mapGlyphToViewBox(points, viewBox)).join(" "));
-        for (const [name, value] of Object.entries(inherited)) {
-            pathEl.setAttribute(name, value);
-        }
-        const withDefault = (name, value) => {
-            if (!(name in inherited)) {
-                pathEl.setAttribute(name, value);
+        pathEl.setAttribute("d", mapGlyphToViewBox(CODE_GLYPH, viewBox));
+        // Inherit the native path's paint; a stroke is carried over only when the
+        // host's icon really uses one, so a fill-only icon stays fill-only.
+        // NB: read .name/.value explicitly — an Attr is not iterable in real
+        // browsers, so destructuring `const [n, v] of attributes` throws
+        // ("... is not iterable"); happy-dom happens to tolerate it.
+        for (const attr of Array.from(templatePath?.attributes ?? [])) {
+            if (attr.name !== "d") {
+                pathEl.setAttribute(attr.name, attr.value);
             }
-        };
-        withDefault("stroke", stroke);
-        withDefault("fill", "none");
-        withDefault("stroke-width", "1.5");
-        withDefault("stroke-linecap", "round");
-        withDefault("stroke-linejoin", "round");
+        }
+        if (!pathEl.hasAttribute("fill")) {
+            pathEl.setAttribute("fill", "currentColor");
+        }
         svg.appendChild(pathEl);
         return svg;
     }

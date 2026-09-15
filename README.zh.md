@@ -39,6 +39,9 @@
   **兄弟容器**中:宿主应用自己的子节点始终保留在 DOM 里(通过注入的样式规则
   隐藏,且保持可测量),它的收起/展开提交永远不会崩溃——切换按钮保持可用,
   展开后的高度也会自动修正以完整显示渲染后的 Markdown。
+- **对齐线上真实构建**:几何尺寸、选择器与样式均依据**真实页面抓取**重新校准
+  (见 `test/fixtures/`);深色模式判断改用该构建自己的 `data-ds-dark-theme`
+  标记,而不再依赖已失效的 `dark` class。
 - **原生历史高亮**:原始气泡从未被替换,历史面板的高亮效果原生生效,
   无需任何镜像逻辑。
 - **绝不删除 DeepSeek 的原始节点**——扁平消息原地渲染;折叠消息将宿主自身
@@ -87,9 +90,13 @@ bun run lint:fix  # 自动修复格式和 lint 问题
 - [`test/assistant-raw.test.ts`](test/assistant-raw.test.ts):助手消息的
   raw / 渲染切换——按钮注入到复制按钮所在行、默认渲染状态、无损切换、
   多次扫描下的幂等、宿主重新渲染后自动补回、各消息互不影响,以及用户消息不被触碰。
-- [`test/marked-quirk.test.ts`](test/marked-quirk.test.ts):marked 18 的回归
-  防护(段落内容为 `---` 时,紧随其后的代码围栏正常解析为代码块;marked 12
-  及以下版本会误判为 setext 标题)。
+- [`test/real-dom.test.ts`](test/real-dom.test.ts):针对
+  [`test/fixtures/deepseek-chat.html`](test/fixtures/deepseek-chat.html) 的集成
+  测试——该文件是**真实聊天页面的原样抓取**(真实结构 + 页面自带样式表)。
+  手写夹具无法发现 DeepSeek 改名或改结构:它永远与测试作者写的选择器自洽。
+  因此这些测试用**页面的真实形态**校验脚本的选择器、用户消息结构、折叠容器与
+  助手操作栏;一旦 DeepSeek 改版,它们会失败并指出变动点。抓取保留了 DOM,
+  但不含 React 内部信息,因此助手正文的来源由形状与线上一致的合成 fiber 提供。
 
 ## CI / 发布
 

@@ -99,18 +99,22 @@ describe("assistant raw/rendered toggle", () => {
         );
     });
 
-    test("draws a real </> glyph, not just two chevrons", () => {
+    test("draws a real </> glyph as a single filled path", () => {
         const svg = rawToggle(assistant.message)?.querySelector("svg");
-        const d = svg?.querySelector("path")?.getAttribute("d") ?? "";
-        // Three strokes: two chevrons plus the slash between them. Dropping the
+        const path = svg?.querySelector("path");
+        const d = path?.getAttribute("d") ?? "";
+        // Three closed subpaths: left chevron, slash, right chevron. Dropping the
         // slash (a regression that shipped once) turns "</>" into "<>" and the
         // button no longer says what it does.
-        const subpaths = d.split("M").filter(Boolean);
-        expect(subpaths.length).toBe(3);
+        expect(d.split("M").filter(Boolean).length).toBe(3);
+        expect(d.split("z").filter(Boolean).length).toBe(3);
+        // DeepSeek's icons are solid fills with no stroke (verified against the
+        // live action bar). Inheriting `fill` while also stroking the path painted
+        // the mark twice, which is what made it look fat and blobby.
+        expect(path?.getAttribute("fill")).toBe("currentColor");
+        expect(path?.hasAttribute("stroke")).toBeFalse();
         // The native icon's geometry is adopted, not a hardcoded size
         expect(svg?.getAttribute("viewBox")).toBe("0 0 16 16");
-        expect(svg?.getAttribute("fill")).toBe("none");
-        expect(svg?.querySelector("path")?.getAttribute("stroke")).toBe("currentColor");
     });
 
     test("shows the raw Markdown source on click and hides the rendered column", () => {

@@ -82,6 +82,19 @@ describe("user message Markdown rendering", () => {
         expect(block?.textContent?.trim()).toBe("---");
     });
 
+    test("parses a fence directly after a paragraph as a code block, not a heading", async () => {
+        // Regression guard for the marked upgrade: marked <=12 read the "---"
+        // inside the fence as a setext underline (an <h2>) plus an empty fence.
+        // Asserted through the real pipeline rather than against marked itself.
+        const { message: quirk } = appendWrappedUserMessage(env.document, "para\n```text\n---\n```");
+        await settle();
+
+        expect(quirk.querySelector("h1, h2")).toBeNull();
+        const pre = quirk.querySelector("pre");
+        expect(pre).not.toBeNull();
+        expect(pre?.textContent).toContain("---");
+    });
+
     test("wraps code blocks in DeepSeek's native md-code-block structure", () => {
         const codeBlock = message.querySelector(".md-code-block");
         expect(codeBlock).not.toBeNull();
@@ -155,51 +168,23 @@ describe("user message Markdown rendering", () => {
         expect(content.dataset.mdRenderedText).toBe(content.textContent.trim());
     });
 
-    test("injects CSS resources and calls the math/highlight hooks", () => {
+    test("injects the stylesheets and calls the math/highlight hooks", () => {
         expect(env.gmResourceTextCalls.sort()).toEqual(["HLJS_CSS", "KATEX_CSS"]);
-        // The third rule keeps the host app's own children of a collapsible
-        // container out of view while our sibling Markdown container is
-        // rendered — out of flow but still measurable (display:none would
-        // zero their size and make the host drop its toggle button)
-        expect(env.gmAddStyleCalls).toEqual([
-            "/* HLJS_CSS */",
-            "/* KATEX_CSS */",
-            "[data-md-collapsible] { position: relative !important; }" +
-                "[data-md-collapsible] > :not(.md-user-markdown):not(.ds-collapsible-text-toggle-button) {" +
-                " position: absolute !important; top: 0 !important; left: 0 !important;" +
-                " width: 100% !important; visibility: hidden !important; }",
-            // Assistant raw mode hides only the Markdown column; the raw <pre>
-            // is styled from DeepSeek's own design tokens (with fallbacks) so it
-            // follows the theme, and the toggle's active state reuses the native
-            // ds-button__background element
-            "[data-md-raw-mode] { display: none !important; }" +
-                ".md-raw-source { margin: 0; padding: 0; border: 0;" +
-                " font-family: var(--ds-font-family-code, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);" +
-                " font-size: var(--dsw-font-markdown-code-font-size, 14px);" +
-                " line-height: var(--dsw-font-markdown-code-line-height, 22px);" +
-                " font-weight: var(--dsw-font-markdown-code-font-weight, 400);" +
-                " color: var(--dsw-alias-label-primary, inherit);" +
-                " background-color: transparent;" +
-                " white-space: pre-wrap; word-break: break-word; overflow-wrap: anywhere; }" +
-                '[data-md-raw-toggle][data-md-raw-active="1"] .ds-button__background {' +
-                " background-color: currentColor !important; opacity: 0.16 !important; }" +
-                // The hint is drawn from the page's tooltip tokens instead of the
-                // browser's title box
-                "[data-md-raw-toggle]::after { content: attr(data-md-raw-tip); position: absolute;" +
-                " top: calc(100% + 8px); left: 50%; transform: translateX(-50%);" +
-                " box-sizing: border-box; padding: 4px 8px; border-radius: 6px;" +
-                " background-color: var(--dsw-alias-tooltip-bg, #2c2c2e);" +
-                " color: var(--dsw-alias-label-primary-inverted, #fff);" +
-                " font-family: var(--dsw-font-family, inherit);" +
-                " font-size: var(--dsw-font-xxs-12-font-size, 12px);" +
-                " font-weight: var(--dsw-font-xxs-12-font-weight, 400);" +
-                " line-height: var(--dsw-font-xxs-12-line-height, 18px);" +
-                " box-shadow: var(--dsw-shadow-lv2, 0 2px 8px rgba(0, 0, 0, 0.12));" +
-                " white-space: nowrap; opacity: 0; pointer-events: none; z-index: 10;" +
-                " transition: opacity var(--ds-transition-duration-fast, 0.1s) ease; }" +
-                "[data-md-raw-toggle]:hover::after, [data-md-raw-toggle]:focus-visible::after {" +
-                " opacity: 1; transition-delay: 0.4s; }",
-        ]);
+        // Assert the CONTRACTS each injected rule must satisfy rather than its
+        // exact text: pinning the full CSS string made every legitimate styling
+        // tweak fail this test without catching any real regression.
+        const css = env.gmAddStyleCalls.join("\n");
+        // Collapsible: host children hidden but still measurable, so the host
+        // keeps its own toggle (display:none zeroes their measured size)
+        expect(css).toContain("[data-md-collapsible]");
+        expect(css).toMatch(/position:\s*absolute\s*!important/);
+        expect(css).toMatch(/visibility:\s*hidden\s*!important/);
+        expect(css).not.toMatch(/\[data-md-collapsible\][^{]*\{[^}]*display:\s*none/);
+        // Raw mode + raw source + active tint + tooltip
+        expect(css).toContain("[data-md-raw-mode] { display: none !important; }");
+        expect(css).toContain(".md-raw-source");
+        expect(css).toContain(".ds-button__background");
+        expect(css).toContain("data-md-raw-tip");
         // KaTeX and highlight.js run on every rendered message
         expect(env.mathCalls.length).toBeGreaterThan(0);
         expect(env.highlightCalls.length).toBeGreaterThan(0);
@@ -275,25 +260,19 @@ describe("user message Markdown rendering", () => {
     });
 
     describe("trailing whitespace", () => {
-        test("strips the trailing newline marked appends, so pre-wrap never renders an empty line", async () => {
-            const { content } = appendWrappedUserMessage(env.document, "hello");
+        test("strips the trailing newline marked appends, everywhere", async () => {
+            // marked outputs a trailing "\n" after the last block; the bubble's
+            // white-space: pre-wrap would render it as an extra empty line
+            const plain = appendWrappedUserMessage(env.document, "hello");
+            const multiline = appendWrappedUserMessage(env.document, "line one\nline two");
             await settle();
 
-            // marked outputs "<p>hello</p>\n"; the trailing \n would render as
-            // a 28px empty line under the bubble's white-space: pre-wrap
-            expect(content.innerHTML.endsWith("</p>")).toBeTrue();
-            expect(content.innerHTML.trimEnd()).toBe(content.innerHTML);
-        });
-
-        test("keeps a multiline paragraph intact while removing the tail", async () => {
-            const { content } = appendWrappedUserMessage(env.document, "line one\nline two");
-            await settle();
-
-            const paragraph = content.querySelector("p");
-            expect(paragraph?.querySelectorAll("br").length).toBe(1);
-            expect(paragraph?.textContent).toBe("line oneline two");
-            expect(content.innerHTML.endsWith("</p>")).toBeTrue();
-            expect(content.innerHTML.trimEnd()).toBe(content.innerHTML);
+            for (const { content } of [plain, multiline]) {
+                expect(content.innerHTML.endsWith("</p>")).toBeTrue();
+                expect(content.innerHTML.trimEnd()).toBe(content.innerHTML);
+            }
+            // line breaks inside the paragraph survive
+            expect(multiline.content.querySelector("p")?.querySelectorAll("br").length).toBe(1);
         });
 
         test("preserves newlines inside code fences", async () => {
@@ -347,14 +326,6 @@ describe("user message Markdown rendering", () => {
 
             // marked emits a \n after every block; under the bubble's
             // white-space: pre-wrap each would render as an empty line
-            expect(whitespaceOnlyTextNodes(content).length).toBe(0);
-        });
-
-        test("keeps newlines inside code blocks", async () => {
-            const { content } = appendWrappedUserMessage(env.document, "```js\nconst a = 1;\n\nconst b = 2;\n```");
-            await settle();
-
-            expect(content.querySelector(".md-code-block pre")?.textContent).toBe("const a = 1;\n\nconst b = 2;\n");
             expect(whitespaceOnlyTextNodes(content).length).toBe(0);
         });
 

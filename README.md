@@ -52,6 +52,10 @@ editing, re-rendering, or the history-item highlight.
   stylesheet rule that keeps them measurable) and its collapse/expand commits
   never break — the toggle keeps working, and the expanded view is resized to
   fit the rendered Markdown.
+- **Live-build fidelity**: geometry, selectors and styling were re-derived from
+  a captured live page (see `test/fixtures/`), and the dark-theme check follows
+  the build's own `data-ds-dark-theme` marker instead of an obsolete `dark`
+  class.
 - **Native history highlight**: because the original bubble is never replaced,
   DeepSeek's history-item highlight works as-is without any mirroring.
 - **Never removes DeepSeek's original nodes** — flat messages render in place,
@@ -92,7 +96,7 @@ bun run lint:fix  # auto-fix formatting and lint issues
   script. Each test file runs in an isolated process.
 - [`test/render.test.ts`](test/render.test.ts): Markdown, native `md-code-block`
   structure, hard line breaks, style classes, resource injection, dark mode,
-  and keeping original nodes intact.
+  block-boundary guards, and keeping original nodes intact.
 - [`test/security.test.ts`](test/security.test.ts): dangerous HTML is escaped —
   blocked tags (`iframe` / `base` / `meta` / `form` / `style` / ...), event
   handlers, dangerous URL schemes (including character-reference smuggling),
@@ -109,9 +113,16 @@ bun run lint:fix  # auto-fix formatting and lint issues
   raw/rendered toggle — injection into the copy button's row, default rendered
   state, lossless toggling, idempotency across scans, re-injection after a host
   re-render, per-message independence, and user messages staying untouched.
-- [`test/marked-quirk.test.ts`](test/marked-quirk.test.ts): regression guard
-  for marked 18 (a code fence directly after a paragraph whose content is
-  `---` parses as a code block; marked <=12 misparsed it as a setext heading).
+- [`test/real-dom.test.ts`](test/real-dom.test.ts): integration tests against
+  [`test/fixtures/deepseek-chat.html`](test/fixtures/deepseek-chat.html), a
+  verbatim capture of a live chat page (real markup plus the page's own
+  stylesheet). Hand-written fixtures cannot notice that DeepSeek renamed or
+  restructured something — they always agree with the selectors the test author
+  wrote — so these tests assert the script's selectors, the user-message shape,
+  the collapsible wrapper and the assistant action bar against the page as it
+  actually is. If DeepSeek ships a new UI they fail and point at what moved.
+  The capture keeps the DOM but not React's internals, so the assistant reply's
+  source is supplied by a synthetic fibre shaped like the live one.
 
 ## CI / Release
 
