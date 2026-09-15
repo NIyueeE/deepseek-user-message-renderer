@@ -627,12 +627,18 @@
         return svg;
     }
 
-    // Dark-mode detection. The live build swaps a `data-ds-dark-theme` attribute
-    // on the document element and its stylesheet keys off
-    // `[data-ds-dark-theme] ...`; older builds used a `dark` class on <body>.
-    // Checking only the class — as this script used to — meant dark mode was
-    // never detected on the current build, so code blocks kept the light theme.
+    // Dark-mode detection. Measured against the 2026-09-15 captures, the live
+    // build marks the BODY, and marks it twice:
+    //     <body class="zh_CN dark" data-ds-dark-theme="dark">
+    // with its stylesheet keying off `body[data-ds-dark-theme] …`. The document
+    // element carries nothing. Older or other builds used the `dark` class
+    // alone, or put the attribute on the document element, so all three are
+    // accepted — but body is checked first, because that is where it actually is
+    // and a broad `querySelector` should not be what makes detection work.
     function isDarkTheme() {
+        if (document.body?.hasAttribute("data-ds-dark-theme")) {
+            return true;
+        }
         if (document.documentElement?.hasAttribute("data-ds-dark-theme")) {
             return true;
         }
@@ -2298,13 +2304,17 @@
             subtree: true,
             characterData: true,
             attributes: true,
-            attributeFilter: ["class"],
+            // `data-ds-dark-theme` because that is where the live build actually
+            // puts its dark marker (`<body class="zh_CN dark" data-ds-dark-theme>`);
+            // `class` because older builds — and the `dark` half of the current
+            // one — signal the theme that way. Both matter: our code blocks bake
+            // in the light/dark variant at build time, so a theme switch that is
+            // not observed leaves a stale variant on screen.
+            attributeFilter: ["class", "data-ds-dark-theme"],
         });
 
-        // Observe the theme attribute itself: the host swaps
-        // `data-ds-dark-theme` on the document element, which the body-class
-        // filter above cannot see, and our code blocks bake in the light/dark
-        // variant at build time.
+        // A build that marks the document element instead (none captured so far,
+        // but the check above accepts it, so the observer must too)
         if (document.documentElement) {
             observer.observe(document.documentElement, {
                 attributes: true,

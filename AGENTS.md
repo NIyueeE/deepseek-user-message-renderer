@@ -63,7 +63,7 @@ There are three layers. **A result from one layer must never be reported as if i
 | --- | --- | --- | --- |
 | **L1 — unit** (`bun test`, `test/env.ts`) | hand-written minimal DOM in happy-dom | selectors, parsing, dedup, edit/collapse state machines, HTML safety | real markup shape, any CSS |
 | **L2 — stand-in browser** (scratch `verify.mjs`) | a page the harness author wrote, with its own tokens and button CSS | structure, events, DOM invariants, measurement, timing (freezes/starvation) | **real-page styling** — its CSS is invented |
-| **L3 — real capture** (`test/fixtures/`) | verbatim captures of the live page, one of them with the page's own stylesheets | real selector drift, real computed styles, real `md-code-block` / button / markdown CSS | anything the capture lacks (see each `provenance.json`) |
+| **L3 — real capture** (`test/fixtures/`) | verbatim captures of the live page; the 2026-09-15 pair kept the page's own stylesheets, in **both themes** | real selector drift, real computed styles, real `md-code-block` / button / markdown CSS, the light AND dark token palettes | anything the captures lack (see each `provenance.json`) |
 
 Rule of thumb: **styling and selector questions are answered at L3 only.** If L3 cannot answer one because the capture lacks that CSS, say so explicitly instead of substituting an L2 result.
 
@@ -92,6 +92,8 @@ and diffs the block it builds against one **DeepSeek itself rendered** in that
 capture: structure, frame (radius/margin/background), typography, and computed
 token colours for every kind both share. It needs Playwright, so it is not part
 of `bun test`; run it whenever rendering, CSS or code-block structure changes.
+Run it for **both** captures — `DSR_FIXTURE=deepseek-chat-dark bun run fixture:parity`
+is the only thing that verifies the dark palette and the dark frame background.
 It is the only check that can answer a styling question — quote its output, not
 an L2 result.
 
@@ -100,10 +102,11 @@ an L2 result.
 Before writing code for a selector, styling, or "the page looks wrong" issue:
 
 1. `bun run fixture:check` — is the capture still valid, and what does it lack?
-2. If it is stale, or if the issue touches something in its gaps (syntax colours,
-   banner/radius, theme variants, anything not in the capture's conversation):
-   **stop and ask the user to re-capture** with `bun run fixture:capture` (see
-   `test/fixtures/README.md` for the conversation it must contain).
+2. If it is stale, or if the issue touches something the captures cannot answer
+   (anything in their declared gaps, or content their conversations do not
+   contain — LaTeX, tables, a streaming reply): **stop and ask the user to
+   re-capture** with `bun run fixture:capture` (see `test/fixtures/README.md`
+   for the conversation it must contain).
 3. Only then reproduce, root-cause, and fix.
 
 Do not "work around" a missing capture by trusting L1/L2 for a styling claim, and

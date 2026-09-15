@@ -1,0 +1,12 @@
+{
+    "source": "https://chat.deepseek.com/a/chat/s/2c466364-cbe6-498f-9aa5-27a33a94abfd",
+    "capturedAt": "2026-09-15",
+    "theme": "dark",
+    "method": "SingleFile save of the same conversation as deepseek-chat.html, taken in the dark theme. Kept the external stylesheets (36 <style> blocks, ~519 KB), including the DARK syntax palette.",
+    "intentionalGaps": [],
+    "notes": [
+        "The dark marker lives on the BODY, not the document element: <body class=\"zh_CN dark\" data-ds-dark-theme=\"dark\">. The page's own stylesheet keys off body[data-ds-dark-theme]. This is where the script reads it from, and the reason isDarkTheme() checks the body attribute before anything else.",
+        "All three md-code-block wrappers are md-code-block-dark, so this capture is what makes the dark variant - and the dark token palette - verifiable. Run: DSR_FIXTURE=deepseek-chat-dark bun run fixture:parity",
+        "Dark palette measured here: keyword #e9ae7e, string #91d076, function #c699e3, parameter #6cb8e6, punctuation #e3eaf2. The light capture colours fewer kinds (no parameter), so the raw view is slightly more colourful in dark mode."
+    ]
+}
