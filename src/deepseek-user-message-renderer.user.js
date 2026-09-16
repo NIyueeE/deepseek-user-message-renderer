@@ -2,7 +2,7 @@
 // @name         DeepSeek User Message Markdown Renderer
 // @name:zh-CN   DeepSeek 用户消息 Markdown 渲染器
 // @namespace    http://tampermonkey.net/
-// @version      1.3.1
+// @version      1.3.2
 // @description  Render your own messages on DeepSeek web with native-style Markdown, LaTeX math, and official code blocks; safe editing and history highlight included.
 // @description:zh-CN  让 DeepSeek 网页版中你自己发送的消息以原生样式渲染 Markdown、LaTeX 公式和官方风格代码块;支持安全编辑与历史消息高亮。
 // @author       NIyueeE
@@ -1301,9 +1301,11 @@
     //     reasoning instead of the reply. Prop names survive minification, and
     //     the memoized props object is stable across renders — unlike the DOM,
     //     which keeps only what rendered — so the value is safe to cache.
-    // Button labels: [0] while the raw source is shown (action: back to
-    // rendered), [1] while the message is rendered (action: show raw source)
-    const RAW_TOGGLE_TITLES = ["切换到渲染视图", "查看原始 Markdown"];
+    // Button labels/tooltips: [0] while the raw source is shown (action: back to
+    // the rendered preview), [1] while the message is rendered (action: show the
+    // raw source). The same string is the accessible name, so the tooltip and
+    // what a screen reader announces never drift apart.
+    const RAW_TOGGLE_TITLES = ["显示预览", "显示源码"];
     // The reasoning chain container: its Markdown must never be mistaken for the
     // reply, and its React prop is `content` rather than `markdown`
     // The live build has no `ds-think-content` class; it marks the block with
@@ -1500,13 +1502,7 @@
             }
             // Put our glyph where the native icon was, keeping the host's
             // wrapper element(s) so their sizing and colour rules keep applying
-            const nativeSvg = clone.querySelector("svg");
-            const icon = buildRawToggleIcon(doc, nativeSvg);
-            if (nativeSvg) {
-                nativeSvg.replaceWith(icon);
-            } else {
-                (clone.querySelector(".ds-button__icon") || clone).appendChild(icon);
-            }
+            paintRawToggleIcon(clone);
             clone.classList.add("md-raw-toggle");
             clone.setAttribute(RAW_BUTTON_ATTR, "1");
             clone.setAttribute("role", "button");
@@ -1532,8 +1528,8 @@
         button.appendChild(background);
         const icon = doc.createElement("div");
         icon.className = "ds-button__icon ds-button__icon--last-child";
-        icon.appendChild(buildRawToggleIcon(doc));
         button.appendChild(icon);
+        paintRawToggleIcon(button);
         return button;
     }
 
@@ -1558,78 +1554,71 @@
         return row ?? actionRow;
     }
 
-    // Our "</>" mark, as a FILLED OUTLINE on a 16x16 grid.
+    // Our glyph: lucide's "file-code-corner" mark — a source file whose top-right
+    // corner is folded, with a `</>` chevron pair on its lower edge.
     //
-    // This shape matters. Every DeepSeek icon is a solid fill
-    // (`fill="currentColor"`, `stroke` nowhere) — verified against the live
-    // action bar. Drawing the mark as a stroked polyline while inheriting the
-    // native `fill` painted it twice: filled, then outlined at 1.5px. That is
-    // what produced the fat, blobby glyph that matched nothing around it.
-    // Expressing the outline explicitly gives one filled path, like its
-    // neighbours.
-    const CODE_GLYPH =
-        "M5.58 3.58L1.15 8l4.43 4.42.84-.84L2.85 8l3.57-3.58z" +
-        "M8.75 2.52L6.09 13.18l1.16.3 2.66-10.36z" +
-        "M9.58 4.42L13.15 8l-3.57 3.58.84.84L14.85 8l-4.43-4.42z";
+    // The geometry is drawn INLINE from these hard-coded paths on lucide's 24x24
+    // grid. Nothing is fetched from a CDN or an icon service, so the button never
+    // depends on another site and the mark cannot go missing when one is blocked.
+    //
+    // Unlike DeepSeek's own icons (solid `fill="currentColor"` shapes), this mark
+    // is a stroked OUTLINE, so its paint is declared explicitly below. Inheriting
+    // the native icons' `fill="currentColor"` would flood every open subpath and
+    // turn the outline into a blob. Stroke-only also means the mark must not be
+    // flattened the way the previous filled `</>` glyph was.
+    const RAW_ICON_VIEW_BOX = "0 0 24 24";
+    const RAW_ICON_PATHS = [
+        "M4 12.15V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.706.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2h-3.35",
+        "M14 2v5a1 1 0 0 0 1 1h5",
+        "m5 16-3 3 3 3",
+        "m9 22 3-3-3-3",
+    ];
 
-    // Map the 16x16 glyph onto the icon's coordinate system, scaling uniformly
-    // so the mark keeps its proportions whatever viewBox a build uses
-    function mapGlyphToViewBox(path, viewBox) {
-        const nums = String(viewBox || "")
-            .trim()
-            .split(/[\s,]+/)
-            .map(Number)
-            .filter((n) => Number.isFinite(n));
-        if (nums.length !== 4) {
-            return path;
-        }
-        const [minX, minY, vbW, vbH] = nums;
-        const scale = Math.min(vbW, vbH) / 16;
-        if (Math.abs(scale - 1) < 1e-6 && minX === 0 && minY === 0) {
-            return path;
-        }
-        const round = (n) => Math.round(n * 100) / 100;
-        return path.replace(
-            /(-?\d+(?:\.\d+)?) (-?\d+(?:\.\d+)?)/g,
-            (_, x, y) => `${round(minX + Number(x) * scale)} ${round(minY + Number(y) * scale)}`,
-        );
-    }
-
-    // Our "</>" glyph, adopting the native icon's box, viewBox and paint
+    // Our glyph, adopting the native icon's rendered box and class so the mark
+    // sits exactly where the host's own icons do
     function buildRawToggleIcon(doc, template) {
-        // Take the geometry from the native icon being replaced, so the mark sits
-        // in exactly the same box as the host's own icons. Hardcoding a size was
-        // why the button first looked smaller and off-centre; the fallbacks below
-        // only apply when there is no native icon to copy.
+        // Take the box from the native icon being replaced, so the mark lines up
+        // with the host's own icons. Hardcoding a size was why the button first
+        // looked smaller and off-centre; the geometry above is authored on
+        // lucide's 24x24 grid, and the browser scales it into that box.
         const size = template?.getAttribute("width") || template?.getAttribute("height") || "16";
-        const viewBox = template?.getAttribute("viewBox") || "0 0 16 16";
-        const templatePath = template?.querySelector("path");
         const svg = doc.createElementNS(SVG_NS, "svg");
         svg.setAttribute("width", size);
         svg.setAttribute("height", size);
-        svg.setAttribute("viewBox", viewBox);
-        svg.setAttribute("fill", template?.getAttribute("fill") || "none");
+        svg.setAttribute("viewBox", RAW_ICON_VIEW_BOX);
+        // Stroke-only paint, pinned on the root AND on every path, so neither an
+        // inherited native `fill` nor a page rule can flood the open subpaths
+        svg.setAttribute("fill", "none");
+        svg.setAttribute("stroke", "currentColor");
+        svg.setAttribute("stroke-width", "2");
+        svg.setAttribute("stroke-linecap", "round");
+        svg.setAttribute("stroke-linejoin", "round");
         svg.setAttribute("xmlns", SVG_NS);
         if (template?.getAttribute("class")) {
             svg.setAttribute("class", template.getAttribute("class"));
         }
-        const pathEl = doc.createElementNS(SVG_NS, "path");
-        pathEl.setAttribute("d", mapGlyphToViewBox(CODE_GLYPH, viewBox));
-        // Inherit the native path's paint; a stroke is carried over only when the
-        // host's icon really uses one, so a fill-only icon stays fill-only.
-        // NB: read .name/.value explicitly — an Attr is not iterable in real
-        // browsers, so destructuring `const [n, v] of attributes` throws
-        // ("... is not iterable"); happy-dom happens to tolerate it.
-        for (const attr of Array.from(templatePath?.attributes ?? [])) {
-            if (attr.name !== "d") {
-                pathEl.setAttribute(attr.name, attr.value);
-            }
+        for (const d of RAW_ICON_PATHS) {
+            const pathEl = doc.createElementNS(SVG_NS, "path");
+            pathEl.setAttribute("d", d);
+            pathEl.setAttribute("fill", "none");
+            svg.appendChild(pathEl);
         }
-        if (!pathEl.hasAttribute("fill")) {
-            pathEl.setAttribute("fill", "currentColor");
-        }
-        svg.appendChild(pathEl);
         return svg;
+    }
+
+    // Draw our glyph inside a toggle, replacing whatever icon it carried while
+    // keeping the host's own icon WRAPPER(s), so their sizing and colour rules
+    // still apply. Used both when building the button and when adopting one that
+    // an earlier injection left behind — so an adopted toggle can never freeze a
+    // stale mark (the fixtures, for instance, were captured with the old glyph).
+    function paintRawToggleIcon(button) {
+        const existingSvg = button.querySelector("svg");
+        const icon = buildRawToggleIcon(button.ownerDocument, existingSvg);
+        if (existingSvg) {
+            existingSvg.replaceWith(icon);
+        } else {
+            (button.querySelector(".ds-button__icon") || button).appendChild(icon);
+        }
     }
 
     // Build the button once per message and keep it injected. It deliberately
@@ -1656,7 +1645,12 @@
             for (const extra of extras) {
                 extra.remove();
             }
+            // Re-draw the mark and the hint: a button adopted from an earlier
+            // injection (or from a capture) can carry an older glyph and label,
+            // and adoption must not freeze them
+            paintRawToggleIcon(kept);
             state.button = kept;
+            syncRawToggleState(state);
             TRACKED_ASSISTANT_MESSAGES.add(message);
             return state;
         }
@@ -1687,8 +1681,11 @@
         }
         button.setAttribute(RAW_ACTIVE_ATTR, state.raw ? "1" : "0");
         button.setAttribute("aria-pressed", state.raw ? "true" : "false");
-        // Describes the action a click performs; drawn by our own tooltip
-        button.setAttribute("data-md-raw-tip", state.raw ? RAW_TOGGLE_TITLES[0] : RAW_TOGGLE_TITLES[1]);
+        // Describes the action a click performs; drawn by our own tooltip and
+        // mirrored into the accessible name
+        const tip = state.raw ? RAW_TOGGLE_TITLES[0] : RAW_TOGGLE_TITLES[1];
+        button.setAttribute("data-md-raw-tip", tip);
+        button.setAttribute("aria-label", tip);
     }
 
     function findRawSourceEl(message) {

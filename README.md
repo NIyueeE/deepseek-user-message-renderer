@@ -27,9 +27,13 @@ editing, re-rendering, or the history-item highlight.
   toggling is lossless, and the button stays consistent across re-renders. The
   button is a clone of the neighbouring native action button, placed at the far
   right of the action row, so it inherits the host's own hover/active/focus
-  styling; its `</>` icon adopts the native icon's geometry (same box, scale,
-  stroke and colour) and its hint is a tooltip drawn from the page's own tooltip
-  tokens rather than the browser's title box.
+  styling; its icon is a stroke-only "file with a folded corner and `</>`"
+  outline (lucide's `file-code-corner`), drawn inline from hard-coded geometry
+  and scaled into the native icon's rendered box, so it never loads anything
+  from a CDN or icon service. Its hint is a tooltip drawn from the page's own
+  tooltip tokens rather than the browser's title box, and it names the action
+  the click performs — `显示源码` while the reply is rendered, `显示预览`
+  while the raw source is shown.
   The raw source is rendered the way DeepSeek renders any fenced block — a
   native `md-code-block` with the language banner (`markdown`), the monospace
   code face and the page's own Prism token colours — and rebuilt when the

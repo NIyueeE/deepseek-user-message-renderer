@@ -115,7 +115,8 @@ describe("assistant raw/rendered toggle", () => {
         expect(assistant.copyButton.id).toBe("native-copy-button");
         // The hint rides on our own attribute (drawn by the token-styled tooltip),
         // never on `title`, so the browser's unstyled box cannot appear
-        expect(button?.getAttribute("data-md-raw-tip")).toBe("查看原始 Markdown");
+        expect(button?.getAttribute("data-md-raw-tip")).toBe("显示源码");
+        expect(button?.getAttribute("aria-label")).toBe("显示源码");
         expect(button?.hasAttribute("title")).toBeFalse();
         // Same element shape as the native button it was cloned from
         expect(Array.from(button?.children ?? []).map((c) => c.className)).toEqual(
@@ -123,22 +124,30 @@ describe("assistant raw/rendered toggle", () => {
         );
     });
 
-    test("draws a real </> glyph as a single filled path", () => {
+    test("draws the inline file-code-corner glyph as a stroked outline", () => {
         const svg = rawToggle(assistant.message)?.querySelector("svg");
-        const path = svg?.querySelector("path");
-        const d = path?.getAttribute("d") ?? "";
-        // Three closed subpaths: left chevron, slash, right chevron. Dropping the
-        // slash (a regression that shipped once) turns "</>" into "<>" and the
-        // button no longer says what it does.
-        expect(d.split("M").filter(Boolean).length).toBe(3);
-        expect(d.split("z").filter(Boolean).length).toBe(3);
-        // DeepSeek's icons are solid fills with no stroke (verified against the
-        // live action bar). Inheriting `fill` while also stroking the path painted
-        // the mark twice, which is what made it look fat and blobby.
-        expect(path?.getAttribute("fill")).toBe("currentColor");
-        expect(path?.hasAttribute("stroke")).toBeFalse();
-        // The native icon's geometry is adopted, not a hardcoded size
-        expect(svg?.getAttribute("viewBox")).toBe("0 0 16 16");
+        const paths = Array.from(svg?.querySelectorAll("path") ?? []);
+        // The mark is lucide's "file-code-corner": the file outline, its folded
+        // corner, and the two `</>` chevrons — all hard-coded here, so the button
+        // never reaches out to a CDN or an icon service
+        expect(paths.length).toBe(4);
+        expect(paths[0]?.getAttribute("d")).toContain("M4 12.15V4");
+        expect(svg?.querySelector("use, image")).toBeNull();
+        expect(svg?.outerHTML ?? "").not.toContain("href");
+        // A stroke-only outline: filling these open subpaths would flood them, and
+        // an inherited native `fill` is exactly how the previous glyph went wrong
+        expect(svg?.getAttribute("fill")).toBe("none");
+        expect(svg?.getAttribute("stroke")).toBe("currentColor");
+        expect(svg?.getAttribute("stroke-width")).toBe("2");
+        expect(svg?.getAttribute("stroke-linecap")).toBe("round");
+        expect(svg?.getAttribute("stroke-linejoin")).toBe("round");
+        for (const path of paths) {
+            expect(path.getAttribute("fill")).toBe("none");
+        }
+        // Authored on lucide's 24x24 grid and scaled into the native icon's box,
+        // which is adopted rather than hardcoded
+        expect(svg?.getAttribute("viewBox")).toBe("0 0 24 24");
+        expect(svg?.getAttribute("width")).toBe("16");
     });
 
     test("shows the raw Markdown source on click and hides the rendered column", () => {
@@ -165,6 +174,10 @@ describe("assistant raw/rendered toggle", () => {
         expect(button.getAttribute("aria-pressed")).toBe("true");
         // The active state is exposed for the native-background tint
         expect(button.getAttribute("data-md-raw-active")).toBe("1");
+        // …and the hint now offers the way back, on both the tooltip and the
+        // accessible name
+        expect(button.getAttribute("data-md-raw-tip")).toBe("显示预览");
+        expect(button.getAttribute("aria-label")).toBe("显示预览");
     });
 
     test("returns to the rendered view on the second click", () => {
@@ -175,6 +188,8 @@ describe("assistant raw/rendered toggle", () => {
         expect(rawSource(assistant.message)).toBeNull();
         expect(markdownColumn(assistant.message).getAttribute("data-md-raw-mode")).toBeNull();
         expect(button.getAttribute("aria-pressed")).toBe("false");
+        // The hint switches back to offering the source
+        expect(button.getAttribute("data-md-raw-tip")).toBe("显示源码");
     });
 
     test("never mutates the host's rendered nodes", () => {

@@ -89,13 +89,18 @@ export function describeCaptureBattery(capture: Capture, expected: { toggles: nu
                 // Appended last: the action bar keeps its native button order
                 const buttons = item.querySelectorAll("._0a3d93b [role=button]");
                 expect(buttons[buttons.length - 1]).toBe(toggle as Element);
-                // A filled glyph with no stroke, and our own hint attribute rather
-                // than `title` (which would raise the browser's unstyled box)
-                const path = toggle?.querySelector("svg path");
-                expect(path?.getAttribute("fill")).toBe("currentColor");
-                expect(path?.hasAttribute("stroke")).toBeFalse();
+                // The running script's own inline stroke-only glyph — re-drawn onto
+                // the adopted button, because the capture was saved with an older
+                // filled `</>` mark and adoption must not freeze it
+                const svg = toggle?.querySelector("svg");
+                const path = svg?.querySelector("path");
+                expect(svg?.getAttribute("stroke")).toBe("currentColor");
+                expect(svg?.getAttribute("fill")).toBe("none");
+                expect(path?.getAttribute("fill")).toBe("none");
                 expect(toggle?.hasAttribute("title")).toBeFalse();
-                expect(toggle?.getAttribute("data-md-raw-tip")).toBeTruthy();
+                // Our own hint attribute rather than `title` (which would raise the
+                // browser's unstyled box), carrying the current label
+                expect(toggle?.getAttribute("data-md-raw-tip")).toBe("显示源码");
             }
         });
 
